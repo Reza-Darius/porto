@@ -1,0 +1,9 @@
+/target
+
+*.svg
+perf.data
+perf.data.old
+profile.json.gz
+
+credentials
+*.pem

@@ -1,0 +1,5 @@
+RezaDarius.de:3000 {
+	bind 127.0.0.1
+	tls credentials/example_cert.pem credentials/example_key.pem
+	reverse_proxy unix//tmp/darius_art.sock
+}
