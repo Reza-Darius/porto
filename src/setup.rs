@@ -6,12 +6,12 @@ use rustls::{
     ServerConfig,
     pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
 };
-use std::{net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, path::Path, sync::Arc};
 use tokio::net::{TcpListener, TcpSocket};
 
 use tokio_rustls::TlsAcceptor;
 
-pub async fn setup_tls(certs: &str, key: &str) -> Result<TlsAcceptor> {
+pub fn setup_tls_from_file(certs: impl AsRef<Path>, key: impl AsRef<Path>) -> Result<TlsAcceptor> {
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
     // Load public certificate.
@@ -25,8 +25,8 @@ pub async fn setup_tls(certs: &str, key: &str) -> Result<TlsAcceptor> {
 
     // TODO
     // let mut resolver = ResolvesServerCertUsingSni::new();
-    // Build TLS configuration.
 
+    // Build TLS configuration.
     let mut server_config = ServerConfig::builder()
         .with_no_client_auth()
         .with_single_cert(certs, key)

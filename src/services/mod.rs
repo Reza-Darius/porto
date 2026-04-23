@@ -1,2 +1,2 @@
+pub mod custom_pool;
 pub mod upstream;
-pub mod upstream_backend;

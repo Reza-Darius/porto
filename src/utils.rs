@@ -1,7 +1,9 @@
 use anyhow::{Result, anyhow};
-use http_body_util::BodyExt;
+use derive_more::{AsRef, Display};
+use http_body_util::{BodyExt, Full};
 use hyper::header::HOST;
 use hyper::{HeaderMap, Request, Response, StatusCode, Version};
+use std::ops::Deref;
 use std::pin::Pin;
 use tokio::net::TcpStream;
 use tracing::debug;
@@ -22,11 +24,11 @@ pub fn empty() -> Body {
         .boxed()
 }
 
-// pub fn full<T: Into<Bytes>>(chunk: T) -> Body {
-//     Full::new(chunk.into())
-//         .map_err(|never| match never {})
-//         .boxed()
-// }
+pub fn full<T: Into<Bytes>>(chunk: T) -> Body {
+    Full::new(chunk.into())
+        .map_err(|never| match never {})
+        .boxed()
+}
 
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
@@ -40,6 +42,10 @@ pub async fn shutdown_signal() {
     tokio::signal::ctrl_c()
         .await
         .expect("failed to install CTRL+C signal handler");
+}
+
+pub fn response(status: StatusCode) -> Response<Body> {
+    Response::builder().status(status).body(empty()).unwrap()
 }
 
 pub fn bad_request() -> Response<Body> {
@@ -66,25 +72,6 @@ pub fn internal_error() -> Response<Body> {
 pub fn get_host<B>(req: &Request<B>) -> Result<&str> {
     let header = req.headers();
     match req.version() {
-        Version::HTTP_09 | Version::HTTP_10 | Version::HTTP_11 => {
-            let host = if let Some(host) = header.get(HOST) {
-                host.to_str()
-                    .ok()
-                    .map(|str| {
-                        if str.contains(':') {
-                            str.split(':').next().unwrap()
-                        } else {
-                            str
-                        }
-                    })
-                    .unwrap()
-            } else {
-                return Err(anyhow!("no host field on http1 request"));
-            };
-
-            debug!("found host: {host}");
-            Ok(host)
-        }
         Version::HTTP_2 => {
             if let Some(host) = header.get(HOST) {
                 let host = host
@@ -112,7 +99,25 @@ pub fn get_host<B>(req: &Request<B>) -> Result<&str> {
             debug!("found host: {host}");
             Ok(host)
         }
-        _ => Err(anyhow!("unsupported HTTP version")),
+        _ => {
+            let host = if let Some(host) = header.get(HOST) {
+                host.to_str()
+                    .ok()
+                    .map(|str| {
+                        if str.contains(':') {
+                            str.split(':').next().unwrap()
+                        } else {
+                            str
+                        }
+                    })
+                    .unwrap()
+            } else {
+                return Err(anyhow!("no host field on http1 request"));
+            };
+
+            debug!("found host: {host}");
+            Ok(host)
+        }
     }
 }
 
@@ -133,5 +138,48 @@ async fn is_tls(stream: &TcpStream) -> bool {
     match stream.peek(&mut peek_buf).await {
         Ok(1) => peek_buf[0] == 0x16,
         _ => false,
+    }
+}
+
+pub struct Domain(String);
+
+impl Deref for Domain {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, AsRef, Display, Hash)]
+pub struct CertPem(String);
+
+impl Deref for CertPem {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, AsRef, Display, Hash)]
+pub struct KeyPem(String);
+
+impl Deref for KeyPem {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, AsRef, Display, Hash)]
+pub struct AcmeToken(String);
+
+impl Deref for AcmeToken {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }

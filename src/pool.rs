@@ -11,7 +11,7 @@ use super::utils::*;
 
 const MAX_POOL_SIZE: usize = 100;
 
-pub async fn new_backend_client(domains: &[(&'static str, &str)]) -> BackendClient {
+pub fn new_backend_client(domains: &[(&'static str, &str)]) -> BackendClient {
     let mut pool = HashMap::new();
 
     for (domain, sock) in domains.iter() {

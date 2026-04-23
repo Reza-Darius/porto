@@ -6,8 +6,7 @@ use hyper_util::rt::TokioExecutor;
 use hyper_util::server::conn::auto::Builder;
 use hyper_util::{rt::TokioIo, service::TowerToHyperService};
 use proxy::pool::new_backend_client;
-use proxy::services::upstream_backend::UpstreamBackend;
-use tokio::net::TcpStream;
+use proxy::services::custom_pool::UpstreamBackend;
 use tokio::select;
 use tokio::time::Instant;
 use tower::ServiceBuilder;
@@ -16,7 +15,6 @@ use tracing::{debug, error};
 use tracing_subscriber::EnvFilter;
 
 use proxy::setup::*;
-use proxy::tls::setup_tls;
 use proxy::utils::*;
 
 const SERVER_CERT_PATH: &str = "credentials/example_cert.pem";
@@ -43,11 +41,11 @@ async fn main() -> Result<()> {
         ("RezaDarius.de", "/tmp/darius_art.sock"),
     ];
 
-    let client = new_backend_client(&domains).await;
+    let client = new_backend_client(&domains);
 
     // Create a TCP listener via tokio.
     let listener = setup_listener(addr);
-    let tls_acceptor = setup_tls(SERVER_CERT_PATH, SERVER_KEY_PATH).await?;
+    let tls_acceptor = setup_tls_from_file(SERVER_CERT_PATH, SERVER_KEY_PATH)?;
 
     let service = ServiceBuilder::new()
         // .layer(ConcurrencyLimitLayer::new(100))
@@ -121,120 +119,3 @@ async fn main() -> Result<()> {
     }
     Ok(())
 }
-
-// // get host name
-// let req_host = if let Ok(host) = get_host(&req) {
-//     host
-// } else {
-//     warn!("no host header found on request");
-//     return Ok(bad_request());
-// };
-
-// let mut sender = sender_handle.lock().await;
-
-// if sender.is_some() {
-//     debug!("reusing upstream connection");
-// } else {
-//     debug!("establishing new upstream connection...")
-// }
-
-// // initilaize UDS connection
-// if sender.is_none() {
-//     let Some(send_host) = domain_handle.get(req_host) else {
-//         warn!("requsted domain not found");
-//         return Ok(not_found());
-//     };
-
-//     if let Ok(con) = uds_connect(send_host).await {
-//         *sender = Some((req_host.to_string(), con));
-//     } else {
-//         warn!("failed to connect to UDS upstream");
-//         return Ok(internal_error());
-//     }
-// }
-
-// // send the data
-// let (send_host, send_ref) = &mut sender.as_mut().expect("we know its there");
-
-// if send_host != req_host {
-//     warn!(req=?req, send_host=?send_host,"bad request: requested host doesnt match destination");
-//     return Ok(bad_request());
-// }
-
-// strip_header(req.headers_mut());
-
-// let t = Instant::now();
-// match send_ref.send_request(req).await {
-//     Ok(resp) => {
-//         debug!(
-//             elapsed_ms = t.elapsed().as_millis(),
-//             "forwarded message time"
-//         );
-//         Ok(resp.map(|r| r.boxed()))
-//     }
-//     Err(e) => {
-//         error!(?e, "failed to send upstream request");
-//         Ok(internal_error())
-//     }
-// }
-//
-
-// let test = true;
-// if test {
-//     return Ok(Response::builder()
-//         .status(StatusCode::OK)
-//         .body(empty())
-//         .unwrap());
-// }
-
-// // get host name
-// let t = Instant::now();
-// let req_host = if let Ok(host) = get_host(&req) {
-//     host
-// } else {
-//     warn!("no host header found on request");
-//     return Ok(bad_request());
-// };
-// debug!(elapsed_ms = t.elapsed().as_millis(), "get host time");
-
-// let t = Instant::now();
-// let Some(pool) = pool_handle.get(&req_host) else {
-//     error!("couldnt retrieve pool");
-//     return Ok(internal_error());
-// };
-// debug!(elapsed_ms = t.elapsed().as_millis(), "pool get time");
-
-// let t = Instant::now();
-// match pool.get().await {
-//     Ok(mut sender) => {
-//         debug!(elapsed_ms = t.elapsed().as_millis(), "pool wait time");
-//         let t = Instant::now();
-//         strip_header(req.headers_mut());
-//         debug!(elapsed_ms = t.elapsed().as_millis(), "strip header time");
-
-//         let t = Instant::now();
-//         match sender.send_request(req).await {
-//             Ok(resp) => {
-//                 debug!(elapsed_ms = t.elapsed().as_millis(), "send request time");
-//                 Ok(resp.map(|r| r.boxed()))
-//             }
-//             Err(e) => {
-//                 error!(?e, "failed to send upstream request");
-//                 Ok(internal_error())
-//             }
-//         }
-//     }
-//     Err(e) => {
-//         debug!(elapsed_ms = t.elapsed().as_millis(), "pool wait time err");
-//         error!(?e, "couldnt retrieve sender from pools");
-//         Ok(internal_error())
-//     }
-// }
-
-// // get host name
-// let req_host = if let Ok(host) = get_host(&req) {
-//     host
-// } else {
-//     warn!("no host header found on request");
-//     return Ok(bad_request());
-// };

@@ -24,8 +24,14 @@ rustls = { version = "0.23.37", features = ["aws_lc_rs"] }
 reqwest = "0.13.2"
 futures = "0.3.32"
 deadpool = { version = "0.13.0", features = ["rt_tokio_1"] }
-dashmap = "6.1.0"
 hyperlocal = "0.9.1"
+instant-acme = { version = "0.8.5", features = ["hyper-rustls"] }
+tikv-jemallocator = "0.6.1"
+rcgen = { version = "0.14.7", features = ["aws_lc_rs"] }
+parking_lot = "0.12.5"
+x509-parser = { version = "0.18.1", features = ["aws-lc-rs"] }
+time = "0.3.47"
+derive_more = { version = "2.1.1", features = ["full"] }
 
 [[bin]]
 name = "server"

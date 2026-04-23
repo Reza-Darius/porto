@@ -22,12 +22,13 @@ async fn main() -> Result<()> {
         .init();
 
     info!("starting client");
+
     let mut header = HeaderMap::new();
     header.insert(HOST, HeaderValue::from_str("RezaDarius.de")?);
 
     let client = reqwest::ClientBuilder::new()
         .https_only(true)
-        .danger_accept_invalid_certs(true)
+        .tls_danger_accept_invalid_certs(true)
         .default_headers(header)
         .build()?;
 

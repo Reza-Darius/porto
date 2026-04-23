@@ -15,7 +15,7 @@ use crate::utils::*;
 
 #[derive(Debug, Clone)]
 pub struct UpstreamService {
-    client: Client<UnixConnector, Incoming>,
+    upstream_client: Client<UnixConnector, Incoming>,
     domains: Arc<HashMap<&'static str, &'static str>>,
 }
 
@@ -25,7 +25,10 @@ impl UpstreamService {
         client: Client<UnixConnector, Incoming>,
     ) -> Self {
         debug!("new upstream service");
-        Self { domains, client }
+        Self {
+            domains,
+            upstream_client: client,
+        }
     }
 }
 
@@ -43,18 +46,16 @@ impl Service<Request<Incoming>> for UpstreamService {
 
     fn call(&mut self, mut req: Request<Incoming>) -> Self::Future {
         let domain_handle = self.domains.clone();
-        let client = self.client.clone();
+        let client = self.upstream_client.clone();
 
         Box::pin(async move {
             // get host name
-            let t = Instant::now();
             let req_host = if let Ok(host) = get_host(&req) {
                 host
             } else {
                 warn!("no host header found on request");
                 return Ok(bad_request());
             };
-            debug!(elapsed_ms = t.elapsed().as_millis(), "get host time");
 
             // get associated socket name
             let Some(sock) = domain_handle.get(req_host) else {
