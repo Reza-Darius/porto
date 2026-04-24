@@ -16,14 +16,11 @@ use crate::utils::*;
 #[derive(Debug, Clone)]
 pub struct UpstreamService {
     upstream_client: Client<UnixConnector, Incoming>,
-    domains: Arc<HashMap<&'static str, &'static str>>,
+    domains: PeerMap,
 }
 
 impl UpstreamService {
-    pub fn new(
-        domains: Arc<HashMap<&'static str, &'static str>>,
-        client: Client<UnixConnector, Incoming>,
-    ) -> Self {
+    pub fn new(domains: PeerMap, client: Client<UnixConnector, Incoming>) -> Self {
         debug!("new upstream service");
         Self {
             domains,
@@ -58,9 +55,16 @@ impl Service<Request<Incoming>> for UpstreamService {
             };
 
             // get associated socket name
-            let Some(sock) = domain_handle.get(req_host) else {
+            let Some(peer_addr) = domain_handle.get_peer_addr(req_host) else {
                 warn!("coulndnt retrieve socket name");
                 return Ok(internal_error());
+            };
+
+            let sock_path = match peer_addr {
+                PeerAddr::Ipv4(_) => unimplemented!("IP upstream is not supported yet"),
+                PeerAddr::Uds(socket_addr) => socket_addr
+                    .as_pathname()
+                    .expect("unnamed sockets arent supported"),
             };
 
             strip_header(req.headers_mut());
@@ -69,7 +73,7 @@ impl Service<Request<Incoming>> for UpstreamService {
                 let (mut parts, body) = req.into_parts();
 
                 parts.version = hyper::Version::HTTP_11;
-                parts.uri = Uri::new(sock, parts.uri.path()).into();
+                parts.uri = Uri::new(sock_path, parts.uri.path()).into();
                 parts
                     .headers
                     .entry("host")
@@ -77,7 +81,7 @@ impl Service<Request<Incoming>> for UpstreamService {
 
                 req = Request::from_parts(parts, body);
             } else {
-                *req.uri_mut() = Uri::new(sock, req.uri().path()).into();
+                *req.uri_mut() = Uri::new(sock_path, req.uri().path()).into();
             }
 
             let t = Instant::now();

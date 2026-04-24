@@ -1,5 +1,6 @@
 use std::io::ErrorKind;
-use std::{collections::HashMap, env, net::SocketAddr, sync::Arc, time::Duration};
+use std::os::unix::net::SocketAddr as UdsSocketAddr;
+use std::{env, net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::Result;
 use hyper::StatusCode;
@@ -40,10 +41,16 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    let domains = Arc::new(HashMap::from([
-        ("darius.dev", "/tmp/darius_dev.sock"),
-        ("RezaDarius.de", "/tmp/darius_art.sock"),
-    ]));
+    let domains = PeerMap::new(&[
+        (
+            "darius.dev",
+            PeerAddr::Uds(UdsSocketAddr::from_pathname("/tmp/darius_dev.sock").unwrap()),
+        ),
+        (
+            "RezaDarius.de",
+            PeerAddr::Uds(UdsSocketAddr::from_pathname("/tmp/darius_art.sock").unwrap()),
+        ),
+    ]);
 
     let client = setup_client();
     let listener = setup_listener(addr);
