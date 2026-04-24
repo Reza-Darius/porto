@@ -3,16 +3,17 @@ use std::{
     collections::{HashMap, HashSet},
     fs,
     future::Ready,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
 };
 
 use anyhow::{Result, anyhow};
+use bincode::config::Configuration;
 use hyper::{Request, Response, StatusCode, body::Incoming};
 use instant_acme::{
-    Account, AuthorizationStatus, ChallengeType, Identifier, KeyAuthorization, LetsEncrypt,
-    NewAccount, NewOrder, OrderStatus, RetryPolicy,
+    Account, AccountBuilder, AccountCredentials, AuthorizationStatus, ChallengeType, Identifier,
+    KeyAuthorization, LetsEncrypt, NewAccount, NewOrder, OrderStatus, RetryPolicy,
 };
 use parking_lot::Mutex;
 use rcgen::{BasicConstraints, CertifiedIssuer, DistinguishedName, DnType, IsCa, KeyPair};
@@ -270,10 +271,32 @@ struct TlsServiceInner {
     resolver: Arc<Resolver>,
 }
 
-async fn acme_worker(store: TlsService) {
-    // TODO: serialize account credentials
-    let (account, _) = Account::builder()
-        .expect("account builder failed")
+async fn get_acme_acc(cred_path: &Path) -> Result<Account> {
+    let path = Path::new(cred_path).join("account");
+    let config = bincode::config::standard();
+
+    if !path.exists() {
+        info!("getting ACME acc credentials from file");
+
+        match tokio::fs::read(&path).await {
+            Ok(file) => {
+                let (creds, _) = bincode::serde::decode_from_slice::<
+                    AccountCredentials,
+                    Configuration,
+                >(&file, config)?;
+
+                let acc = Account::builder()?.from_credentials(creds).await?;
+
+                return Ok(acc);
+            }
+            Err(e) => error!(%e, "couldnt retrieve acc credentials from disk"),
+        };
+    }
+
+    info!("requesting new ACME account");
+
+    // we have to get a new account
+    let (account, creds) = Account::builder()?
         .create(
             &NewAccount {
                 contact: &[], // could be some email
@@ -284,11 +307,18 @@ async fn acme_worker(store: TlsService) {
             LetsEncrypt::Staging.url().to_owned(),
             None,
         )
-        .await
-        .expect("account couldnt be created");
+        .await?;
 
+    let data = bincode::serde::encode_to_vec::<AccountCredentials, Configuration>(creds, config)?;
+    tokio::fs::write(path, data).await?;
+
+    Ok(account)
+}
+
+async fn acme_worker(store: TlsService) {
     let mut timer = tokio::time::interval(Duration::from_hours(CHECK_INTERVAL_HOURS));
 
+    let account = get_acme_acc(&store.inner.cred_path).await.unwrap();
     loop {
         timer.tick().await;
 
