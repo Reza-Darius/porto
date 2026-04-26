@@ -7,3 +7,4 @@ profile.json.gz
 
 credentials
 *.pem
+pebble/

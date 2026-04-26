@@ -7,6 +7,7 @@ use hyper::{HeaderMap, Request, Response, StatusCode, Version};
 use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
 use std::collections::HashMap;
+use std::fmt::Display;
 use std::net::Ipv4Addr;
 use std::pin::Pin;
 use tokio::net::TcpStream;
@@ -138,7 +139,7 @@ pub fn strip_header(headers: &mut HeaderMap) {
     headers.remove("proxy-authorization");
 }
 
-async fn is_tls(stream: &TcpStream) -> bool {
+pub async fn is_tls(stream: &TcpStream) -> bool {
     let mut peek_buf = [0u8; 1];
     match stream.peek(&mut peek_buf).await {
         // a https "client hello" starts with 0x16
@@ -168,6 +169,15 @@ impl UpstreamMap {
 
     pub fn get_domains(&self) -> impl Iterator<Item = &Domain> {
         self.inner.map.keys()
+    }
+}
+
+impl Display for UpstreamMap {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (domain, peer) in self.inner.map.iter() {
+            write!(f, "Domain: {domain}, peer: {peer:?}")?;
+        }
+        std::fmt::Result::Ok(())
     }
 }
 
@@ -205,6 +215,7 @@ impl Borrow<str> for Domain {
 }
 
 #[derive(Debug, Clone, Display, Hash, Eq, PartialEq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct CertChainPem(String);
 
 impl CertChainPem {
@@ -218,6 +229,7 @@ impl CertChainPem {
 }
 
 #[derive(Debug, Clone, Display, Hash, Eq, PartialEq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct KeyPem(String);
 
 impl KeyPem {

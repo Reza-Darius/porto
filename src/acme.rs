@@ -1,7 +1,6 @@
 #![allow(dead_code)]
 use std::{
     collections::{HashMap, HashSet},
-    fs,
     future::Ready,
     path::{Path, PathBuf},
     sync::Arc,
@@ -12,11 +11,10 @@ use anyhow::{Result, anyhow};
 use bincode::config::Configuration;
 use hyper::{Request, Response, StatusCode, body::Incoming};
 use instant_acme::{
-    Account, AccountCredentials, AuthorizationStatus, ChallengeType, Identifier, KeyAuthorization,
-    LetsEncrypt, NewAccount, NewOrder, OrderStatus, RetryPolicy,
+    Account, AccountBuilder, AccountCredentials, AuthorizationStatus, ChallengeType, Identifier,
+    KeyAuthorization, LetsEncrypt, NewAccount, NewOrder, OrderStatus, RetryPolicy,
 };
 use parking_lot::Mutex;
-use rcgen::{BasicConstraints, CertifiedIssuer, DistinguishedName, DnType, IsCa, KeyPair};
 use rustls::{
     ServerConfig,
     client::verify_server_name,
@@ -176,17 +174,39 @@ impl Service<Request<Incoming>> for AcmeService {
     }
 }
 
+/// clonable handler
 #[derive(Debug, Clone)]
 pub struct TlsService {
     inner: Arc<TlsServiceInner>,
 }
 
+#[derive(Debug)]
+struct TlsServiceInner {
+    cred_path: PathBuf,
+    // table of registered domains in the proxy
+    peers: UpstreamMap,
+    // in memory cache
+    certs: Mutex<HashMap<Domain, (CertChainPem, KeyPem)>>,
+    pending_challenges: Mutex<HashMap<AcmeToken, KeyAuthorization>>,
+
+    config: Arc<ServerConfig>,
+    resolver: Arc<Resolver>,
+}
+
 impl TlsService {
-    pub fn init(cred_path: impl Into<PathBuf>, peers: UpstreamMap) -> Self {
+    pub fn init(cred_path: impl Into<PathBuf>, peers: UpstreamMap) -> Result<Self> {
+        let path = cred_path.into();
+
+        debug!("initializing TLS Service");
+        debug!(path = %path.display());
+        debug!(%peers);
+
         // Build TLS configuration.
+
+        // this should crash the program if called twice
         rustls::crypto::aws_lc_rs::default_provider()
             .install_default()
-            .unwrap(); // this should crash the program if called twice
+            .map_err(|_| anyhow!("error when setting default crypto provider"))?;
 
         let resolver = Arc::new(Resolver::new());
         let mut server_config = ServerConfig::builder()
@@ -197,9 +217,9 @@ impl TlsService {
         server_config.alpn_protocols =
             vec![b"h2".to_vec(), b"http/1.1".to_vec(), b"http/1.0".to_vec()];
 
-        TlsService {
+        Ok(TlsService {
             inner: Arc::new(TlsServiceInner {
-                cred_path: cred_path.into(),
+                cred_path: path,
                 peers,
                 certs: Mutex::new(HashMap::new()),
                 pending_challenges: Mutex::new(HashMap::new()),
@@ -207,11 +227,13 @@ impl TlsService {
                 resolver,
                 config: Arc::new(server_config),
             }),
-        }
+        })
     }
 
     /// check for expired certificates
     fn check_certs(&self) -> Option<Vec<Domain>> {
+        debug!("checking certs");
+
         let guard = self.inner.certs.lock();
 
         let expired_domains: Vec<_> = guard
@@ -230,6 +252,8 @@ impl TlsService {
 
     /// checks the peer list to see if we have a certificate
     fn check_new_domains(&self) -> Option<Vec<Domain>> {
+        debug!("checking for new domains");
+
         let guard = self.inner.certs.lock();
 
         let new_domains: Vec<_> = self
@@ -249,11 +273,11 @@ impl TlsService {
     }
 
     fn add_to_resolver(&self, domain: &Domain, certs: CertChainPem, key: KeyPem) -> Result<()> {
+        debug!(%domain, "adding domain to resolver");
+
         if is_expired(&certs) {
             return Err(anyhow!("cant register expired certificates!"));
         }
-
-        info!("adding {} to resolver", domain);
 
         let certs = CertificateDer::pem_slice_iter(certs.as_str().as_bytes())
             .collect::<Result<Vec<_>, _>>()
@@ -274,17 +298,39 @@ impl TlsService {
     }
 }
 
-#[derive(Debug)]
-struct TlsServiceInner {
-    cred_path: PathBuf,
-    // table of registered domains in the proxy
-    peers: UpstreamMap,
-    // in memory cache
-    certs: Mutex<HashMap<Domain, (CertChainPem, KeyPem)>>,
-    pending_challenges: Mutex<HashMap<AcmeToken, KeyAuthorization>>,
+async fn acme_test_acc() -> Result<Account> {
+    let acc = NewAccount {
+        contact: &["test@email.com"],
+        terms_of_service_agreed: true,
+        only_return_existing: false,
+    };
 
-    config: Arc<ServerConfig>,
-    resolver: Arc<Resolver>,
+    let certs = CertificateDer::pem_file_iter("pebble/test/certs/pebble.minica.pem")?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut roots = rustls::RootCertStore::empty();
+    roots.add_parsable_certificates(certs);
+
+    let tls_config = rustls::ClientConfig::builder()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+
+    let connector = hyper_rustls::HttpsConnectorBuilder::new()
+        .with_tls_config(tls_config)
+        .https_only()
+        .enable_http1()
+        .build();
+
+    let client = Box::new(
+        hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
+            .build(connector),
+    );
+
+    let acc = Account::builder_with_http(client)
+        .create(&acc, LetsEncrypt::Production.url().to_string(), None)
+        .await?;
+
+    Ok(acc.0)
 }
 
 async fn get_acme_acc(cred_path: &Path) -> Result<Account> {
@@ -292,7 +338,7 @@ async fn get_acme_acc(cred_path: &Path) -> Result<Account> {
     let config = bincode::config::standard();
 
     if path.exists() {
-        info!("getting ACME acc credentials from file");
+        info!("retrieving ACME acc credentials from file");
 
         if let Ok(file) = tokio::fs::read(&path)
             .await
@@ -339,14 +385,12 @@ async fn acme_worker(store: TlsService) {
 
         // TODO: some sort watcher channel for newly added domains when the server is running
 
-        debug!("checking new domains...");
         if let Some(domains) = store.check_new_domains() {
             let _ = issue_order(store.clone(), &account, &domains)
                 .await
                 .inspect_err(|e| error!(%e, "ACME error"));
         }
 
-        debug!("checking expired certs...");
         if let Some(domains) = store.check_certs() {
             let _ = issue_order(store.clone(), &account, &domains)
                 .await
@@ -437,28 +481,85 @@ impl server::ResolvesServerCert for Resolver {
     }
 }
 
-fn test_certs() -> anyhow::Result<()> {
-    let ca_key = KeyPair::generate()?;
-    let mut distinguished_name = DistinguishedName::new();
-    distinguished_name.push(DnType::CommonName, "Pebble CA".to_owned());
-    let mut ca_params = rcgen::CertificateParams::default();
-    ca_params.distinguished_name = distinguished_name;
-    ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+#[cfg(test)]
+mod tests {
+    use hyper::server::conn::http1::Builder;
+    use hyper_util::rt::TokioIo;
+    use hyper_util::service::TowerToHyperService;
+    use rcgen::{BasicConstraints, CertifiedIssuer, DistinguishedName, DnType, IsCa, KeyPair};
+    use std::{fs, os::unix::net::SocketAddr as UdsSocketAddr};
+    use tokio::io::AsyncWriteExt;
+    use tracing_subscriber::EnvFilter;
 
-    let issuer = CertifiedIssuer::self_signed(ca_params, ca_key)?;
-    fs::write("testdata/ca.pem", issuer.as_ref().pem())?;
+    use super::*;
 
-    let ee_key = KeyPair::generate()?;
-    fs::write("testdata/server.key", ee_key.serialize_pem())?;
+    fn test_certs() -> anyhow::Result<()> {
+        let ca_key = KeyPair::generate()?;
+        let mut distinguished_name = DistinguishedName::new();
+        distinguished_name.push(DnType::CommonName, "Pebble CA".to_owned());
+        let mut ca_params = rcgen::CertificateParams::default();
+        ca_params.distinguished_name = distinguished_name;
+        ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
 
-    let mut ee_params = rcgen::CertificateParams::new([
-        "localhost".to_owned(),
-        "127.0.0.1".to_owned(),
-        "::1".to_owned(),
-    ])?;
-    ee_params.distinguished_name = DistinguishedName::new();
-    let ee_cert = ee_params.signed_by(&ee_key, &issuer)?;
-    fs::write("testdata/server.pem", ee_cert.pem())?;
+        let issuer = CertifiedIssuer::self_signed(ca_params, ca_key)?;
+        fs::write("testdata/ca.pem", issuer.as_ref().pem())?;
 
-    Ok(())
+        let ee_key = KeyPair::generate()?;
+        fs::write("testdata/server.key", ee_key.serialize_pem())?;
+
+        let mut ee_params = rcgen::CertificateParams::new([
+            "localhost".to_owned(),
+            "127.0.0.1".to_owned(),
+            "::1".to_owned(),
+        ])?;
+        ee_params.distinguished_name = DistinguishedName::new();
+        let ee_cert = ee_params.signed_by(&ee_key, &issuer)?;
+        fs::write("testdata/server.pem", ee_cert.pem())?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn acme_test() -> Result<()> {
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                EnvFilter::try_from_default_env()
+                    .or_else(|_| EnvFilter::try_new("proxy=error,tower_http=warn"))?,
+            )
+            .init();
+
+        let addr = "127.0.0.1:4000";
+        let cred_path = "credentials/";
+
+        let domains = UpstreamMap::new(&[
+            // (
+            //     Domain::parse("darius.dev").unwrap(),
+            //     PeerAddr::Uds(UdsSocketAddr::from_pathname("/tmp/darius_dev.sock").unwrap()),
+            // ),
+            (
+                Domain::parse("RezaDarius.de").unwrap(),
+                PeerAddr::Uds(UdsSocketAddr::from_pathname("/tmp/darius_art.sock").unwrap()),
+            ),
+        ]);
+
+        let listener = tokio::net::TcpListener::bind(addr).await?;
+        let tls = TlsService::init(cred_path, domains).unwrap();
+        let service = TowerToHyperService::new(AcmeService::new(tls.clone()));
+
+        info!("test ACME server listening on 127.0.0.1");
+
+        while let Ok((con, _)) = listener.accept().await {
+            if is_tls(&con).await {
+                let acceptor = tls.get_acceptor();
+                let mut s = acceptor.accept(con).await?;
+                s.write_all(b"HTTP/1.1 200 OK\r\n").await?;
+                continue;
+            }
+
+            let stream = TokioIo::new(con);
+            let builder = Builder::new();
+            builder.serve_connection(stream, service.clone()).await?;
+        }
+        Ok(())
+    }
 }
