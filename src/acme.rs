@@ -12,8 +12,8 @@ use anyhow::{Result, anyhow};
 use bincode::config::Configuration;
 use hyper::{Request, Response, StatusCode, body::Incoming};
 use instant_acme::{
-    Account, AccountBuilder, AccountCredentials, AuthorizationStatus, ChallengeType, Identifier,
-    KeyAuthorization, LetsEncrypt, NewAccount, NewOrder, OrderStatus, RetryPolicy,
+    Account, AccountCredentials, AuthorizationStatus, ChallengeType, Identifier, KeyAuthorization,
+    LetsEncrypt, NewAccount, NewOrder, OrderStatus, RetryPolicy,
 };
 use parking_lot::Mutex;
 use rcgen::{BasicConstraints, CertifiedIssuer, DistinguishedName, DnType, IsCa, KeyPair};
@@ -37,7 +37,7 @@ const RENEWAL_THRESHHOLD: i64 = 60 * 60 * 24 * RENEWAL_THRESHOLD_DAYS;
 const CHECK_INTERVAL_HOURS: u64 = 24;
 
 /// Create the ACME order based on the given domain names.
-async fn issue_acme(store: TlsService, account: &Account, domains: &[Domain]) -> Result<()> {
+async fn issue_order(store: TlsService, account: &Account, domains: &[Domain]) -> Result<()> {
     let domains: Vec<_> = domains.to_vec();
     let identifier: Vec<_> = domains
         .iter()
@@ -63,13 +63,16 @@ async fn issue_acme(store: TlsService, account: &Account, domains: &[Domain]) ->
             .challenge(ChallengeType::Http01)
             .ok_or_else(|| anyhow::anyhow!("no http01 challenge found"))?;
 
-        store.inner.pending_challenges.lock().insert(
-            challenge.token.as_str().into(),
-            challenge.key_authorization(),
-        );
+        let token = AcmeToken::from_str(challenge.token.clone());
+
+        store
+            .inner
+            .pending_challenges
+            .lock()
+            .insert(token.clone(), challenge.key_authorization());
 
         // remembering the token for removal later
-        tokens.insert(challenge.token.as_str().into());
+        tokens.insert(token);
 
         challenge.set_ready().await?;
     }
@@ -86,24 +89,37 @@ async fn issue_acme(store: TlsService, account: &Account, domains: &[Domain]) ->
     }
 
     // Finalize the order and print certificate chain, private key and account credentials.
-    let private_key_pem = order.finalize().await?;
-    let cert_chain_pem = order.poll_certificate(&RetryPolicy::default()).await?;
+    let key = KeyPem::from_str(order.finalize().await?);
+    let cert = CertChainPem::from_str(order.poll_certificate(&RetryPolicy::default()).await?);
 
-    // remove from pending tokens
-    let mut guard = store.inner.pending_challenges.lock();
-    for token in tokens.into_iter() {
-        guard.remove(&token);
+    {
+        // remove from pending tokens
+        let mut guard = store.inner.pending_challenges.lock();
+        for token in tokens.into_iter() {
+            guard.remove(&token);
+        }
     }
-    drop(guard);
 
-    // insert inside the store
-    let mut guard = store.inner.certs.lock();
-    let cert: CertChainPem = cert_chain_pem.into();
-    let key: KeyPem = private_key_pem.into();
+    tokio::fs::write(
+        store.inner.cred_path.join("key.pem"),
+        key.as_str().as_bytes(),
+    )
+    .await?;
 
-    for domain in domains.into_iter() {
-        store.add_to_resolver(&domain, cert.clone(), key.clone())?;
-        guard.insert(domain, (cert.clone(), key.clone()));
+    tokio::fs::write(
+        store.inner.cred_path.join("cert.pem"),
+        cert.as_str().as_bytes(),
+    )
+    .await?;
+
+    {
+        // insert inside in memory cache
+        let mut guard = store.inner.certs.lock();
+
+        for domain in domains.into_iter() {
+            store.add_to_resolver(&domain, cert.clone(), key.clone())?;
+            guard.insert(domain, (cert.clone(), key.clone()));
+        }
     }
 
     info!("ACME order completed\n{}\n{}", cert, key);
@@ -166,7 +182,7 @@ pub struct TlsService {
 }
 
 impl TlsService {
-    pub fn init(cache_path: impl Into<PathBuf>, peers: PeerMap) -> Self {
+    pub fn init(cred_path: impl Into<PathBuf>, peers: UpstreamMap) -> Self {
         // Build TLS configuration.
         rustls::crypto::aws_lc_rs::default_provider()
             .install_default()
@@ -183,7 +199,7 @@ impl TlsService {
 
         TlsService {
             inner: Arc::new(TlsServiceInner {
-                cred_path: cache_path.into(),
+                cred_path: cred_path.into(),
                 peers,
                 certs: Mutex::new(HashMap::new()),
                 pending_challenges: Mutex::new(HashMap::new()),
@@ -239,11 +255,11 @@ impl TlsService {
 
         info!("adding {} to resolver", domain);
 
-        let certs = CertificateDer::pem_slice_iter(certs.as_ref().as_bytes())
+        let certs = CertificateDer::pem_slice_iter(certs.as_str().as_bytes())
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| anyhow!("could not read certificate: {e}"))?;
 
-        let key = PrivateKeyDer::from_pem_slice(key.as_ref().as_bytes())
+        let key = PrivateKeyDer::from_pem_slice(key.as_str().as_bytes())
             .map_err(|e| anyhow!("could not read key: {e}"))?;
 
         let provider = rustls::crypto::aws_lc_rs::default_provider();
@@ -262,7 +278,7 @@ impl TlsService {
 struct TlsServiceInner {
     cred_path: PathBuf,
     // table of registered domains in the proxy
-    peers: PeerMap,
+    peers: UpstreamMap,
     // in memory cache
     certs: Mutex<HashMap<Domain, (CertChainPem, KeyPem)>>,
     pending_challenges: Mutex<HashMap<AcmeToken, KeyAuthorization>>,
@@ -275,21 +291,20 @@ async fn get_acme_acc(cred_path: &Path) -> Result<Account> {
     let path = Path::new(cred_path).join("account");
     let config = bincode::config::standard();
 
-    if !path.exists() {
+    if path.exists() {
         info!("getting ACME acc credentials from file");
 
-        match tokio::fs::read(&path).await {
-            Ok(file) => {
-                let (creds, _) = bincode::serde::decode_from_slice::<
-                    AccountCredentials,
-                    Configuration,
-                >(&file, config)?;
+        if let Ok(file) = tokio::fs::read(&path)
+            .await
+            .inspect_err(|e| error!(%e, "couldnt retrieve acc credentials from disk"))
+        {
+            let (creds, _) = bincode::serde::decode_from_slice::<AccountCredentials, Configuration>(
+                &file, config,
+            )?;
 
-                let acc = Account::builder()?.from_credentials(creds).await?;
+            let acc = Account::builder()?.from_credentials(creds).await?;
 
-                return Ok(acc);
-            }
-            Err(e) => error!(%e, "couldnt retrieve acc credentials from disk"),
+            return Ok(acc);
         };
     }
 
@@ -316,9 +331,9 @@ async fn get_acme_acc(cred_path: &Path) -> Result<Account> {
 }
 
 async fn acme_worker(store: TlsService) {
+    let account = get_acme_acc(&store.inner.cred_path).await.unwrap();
     let mut timer = tokio::time::interval(Duration::from_hours(CHECK_INTERVAL_HOURS));
 
-    let account = get_acme_acc(&store.inner.cred_path).await.unwrap();
     loop {
         timer.tick().await;
 
@@ -326,14 +341,14 @@ async fn acme_worker(store: TlsService) {
 
         debug!("checking new domains...");
         if let Some(domains) = store.check_new_domains() {
-            let _ = issue_acme(store.clone(), &account, &domains)
+            let _ = issue_order(store.clone(), &account, &domains)
                 .await
                 .inspect_err(|e| error!(%e, "ACME error"));
         }
 
         debug!("checking expired certs...");
         if let Some(domains) = store.check_certs() {
-            let _ = issue_acme(store.clone(), &account, &domains)
+            let _ = issue_order(store.clone(), &account, &domains)
                 .await
                 .inspect_err(|e| error!(%e, "ACME error"));
         }
@@ -341,7 +356,7 @@ async fn acme_worker(store: TlsService) {
 }
 
 fn should_renew(cert_pem: &CertChainPem) -> bool {
-    let (_, pem) = parse_x509_pem(cert_pem.as_ref().as_bytes()).unwrap();
+    let (_, pem) = parse_x509_pem(cert_pem.as_str().as_bytes()).unwrap();
     let cert = pem.parse_x509().unwrap();
 
     let not_after = cert.validity().not_after.timestamp();
@@ -353,7 +368,7 @@ fn should_renew(cert_pem: &CertChainPem) -> bool {
 }
 
 fn is_expired(cert_pem: &CertChainPem) -> bool {
-    let (_, pem) = parse_x509_pem(cert_pem.as_ref().as_bytes()).unwrap();
+    let (_, pem) = parse_x509_pem(cert_pem.as_str().as_bytes()).unwrap();
     let cert = pem.parse_x509().unwrap();
 
     let not_after = cert.validity().not_after.timestamp();
@@ -383,7 +398,7 @@ impl Resolver {
     /// chain is syntactically faulty.
     pub fn add(&self, name: &Domain, ck: sign::CertifiedKey) -> Result<(), rustls::Error> {
         let server_name = {
-            let checked_name = DnsName::try_from(name.as_ref() as &str)
+            let checked_name = DnsName::try_from(name.as_str())
                 .map_err(|_| rustls::Error::General("Bad DNS name".into()))
                 .map(|name| name.to_lowercase_owned())?;
             ServerName::DnsName(checked_name)
@@ -431,10 +446,10 @@ fn test_certs() -> anyhow::Result<()> {
     ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
 
     let issuer = CertifiedIssuer::self_signed(ca_params, ca_key)?;
-    fs::write("tests/testdata/ca.pem", issuer.as_ref().pem())?;
+    fs::write("testdata/ca.pem", issuer.as_ref().pem())?;
 
     let ee_key = KeyPair::generate()?;
-    fs::write("tests/testdata/server.key", ee_key.serialize_pem())?;
+    fs::write("testdata/server.key", ee_key.serialize_pem())?;
 
     let mut ee_params = rcgen::CertificateParams::new([
         "localhost".to_owned(),
@@ -443,7 +458,7 @@ fn test_certs() -> anyhow::Result<()> {
     ])?;
     ee_params.distinguished_name = DistinguishedName::new();
     let ee_cert = ee_params.signed_by(&ee_key, &issuer)?;
-    fs::write("tests/testdata/server.pem", ee_cert.pem())?;
+    fs::write("testdata/server.pem", ee_cert.pem())?;
 
     Ok(())
 }

@@ -1,8 +1,10 @@
+use addr::parse_domain_name;
 use anyhow::{Result, anyhow};
 use derive_more::{AsRef, Display, Eq, From};
 use http_body_util::{BodyExt, Full};
 use hyper::header::HOST;
 use hyper::{HeaderMap, Request, Response, StatusCode, Version};
+use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
@@ -147,24 +149,21 @@ async fn is_tls(stream: &TcpStream) -> bool {
 
 /// maps domains to upstream addresses as either UDS or TCP connection
 #[derive(Debug, Clone)]
-pub struct PeerMap {
-    inner: Arc<DomainMapInner>,
+pub struct UpstreamMap {
+    inner: Arc<UpstreamMapInner>,
 }
 
-impl PeerMap {
-    pub fn new(domains: &[(impl AsRef<str>, PeerAddr)]) -> Self {
-        PeerMap {
-            inner: Arc::new(DomainMapInner {
-                map: domains
-                    .iter()
-                    .map(|(domain, addr)| (domain.as_ref().into(), addr.clone()))
-                    .collect(),
+impl UpstreamMap {
+    pub fn new(domains: &[(Domain, PeerAddr)]) -> Self {
+        UpstreamMap {
+            inner: Arc::new(UpstreamMapInner {
+                map: domains.iter().cloned().collect(),
             }),
         }
     }
 
-    pub fn get_peer_addr(&self, domain: impl AsRef<str>) -> Option<&PeerAddr> {
-        self.inner.map.get(domain.as_ref())
+    pub fn get_peer_addr(&self, domain: &str) -> Option<&PeerAddr> {
+        self.inner.map.get(domain)
     }
 
     pub fn get_domains(&self) -> impl Iterator<Item = &Domain> {
@@ -173,7 +172,7 @@ impl PeerMap {
 }
 
 #[derive(Debug)]
-struct DomainMapInner {
+struct UpstreamMapInner {
     map: HashMap<Domain, PeerAddr>,
 }
 
@@ -183,91 +182,69 @@ pub enum PeerAddr {
     Uds(SocketAddr),
 }
 
-#[derive(Debug, Clone, AsRef, Display, Hash, Eq, PartialEq, PartialOrd, Ord, From)]
+#[derive(Debug, Clone, Display, Hash, Eq, PartialEq, PartialOrd, Ord)]
 pub struct Domain(Arc<str>);
 
-impl From<&str> for Domain {
-    fn from(value: &str) -> Self {
-        Domain(value.into())
+impl Domain {
+    pub fn parse(str: impl AsRef<str>) -> Result<Self> {
+        match parse_domain_name(str.as_ref()) {
+            Ok(_) => Ok(Domain(Arc::from(str.as_ref()))),
+            Err(e) => Err(anyhow!("domain parse error {e}")),
+        }
     }
-}
 
-impl From<String> for Domain {
-    fn from(value: String) -> Self {
-        Domain(Arc::from(value))
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 }
 
 impl Borrow<str> for Domain {
     fn borrow(&self) -> &str {
-        self.0.borrow()
+        self.as_str()
     }
 }
 
-impl Borrow<str> for &Domain {
-    fn borrow(&self) -> &str {
-        self.0.borrow()
+#[derive(Debug, Clone, Display, Hash, Eq, PartialEq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct CertChainPem(String);
+
+impl CertChainPem {
+    pub fn from_str(str: impl Into<String>) -> Self {
+        CertChainPem(str.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 }
 
-#[derive(Debug, Clone, AsRef, Display, Hash, Eq, PartialEq, PartialOrd, Ord, From)]
-pub struct CertChainPem(Arc<str>);
+#[derive(Debug, Clone, Display, Hash, Eq, PartialEq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct KeyPem(String);
 
-impl Borrow<str> for CertChainPem {
-    fn borrow(&self) -> &str {
-        self.0.borrow()
+impl KeyPem {
+    pub fn from_str(str: impl Into<String>) -> Self {
+        KeyPem(str.into())
     }
-}
 
-impl From<&str> for CertChainPem {
-    fn from(value: &str) -> Self {
-        CertChainPem(value.into())
-    }
-}
-impl From<String> for CertChainPem {
-    fn from(value: String) -> Self {
-        CertChainPem(Arc::from(value))
-    }
-}
-
-#[derive(Debug, Clone, AsRef, Display, Hash, Eq, PartialEq, PartialOrd, Ord, From)]
-pub struct KeyPem(Arc<str>);
-
-impl Borrow<str> for KeyPem {
-    fn borrow(&self) -> &str {
-        self.0.borrow()
-    }
-}
-
-impl From<&str> for KeyPem {
-    fn from(value: &str) -> Self {
-        KeyPem(value.into())
-    }
-}
-
-impl From<String> for KeyPem {
-    fn from(value: String) -> Self {
-        KeyPem(Arc::from(value))
+    pub fn as_str(&self) -> &str {
+        &self.0
     }
 }
 
 #[derive(Debug, Clone, AsRef, Display, Hash, Eq, PartialEq, PartialOrd, Ord, From)]
-pub struct AcmeToken(Arc<str>);
+pub struct AcmeToken(String);
+
+impl AcmeToken {
+    pub fn from_str(str: impl Into<String>) -> Self {
+        AcmeToken(str.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
 
 impl Borrow<str> for AcmeToken {
     fn borrow(&self) -> &str {
-        self.0.borrow()
-    }
-}
-
-impl From<&str> for AcmeToken {
-    fn from(value: &str) -> Self {
-        AcmeToken(value.into())
-    }
-}
-
-impl From<String> for AcmeToken {
-    fn from(value: String) -> Self {
-        AcmeToken(Arc::from(value))
+        self.as_str()
     }
 }

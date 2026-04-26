@@ -16,11 +16,11 @@ use crate::utils::*;
 #[derive(Debug, Clone)]
 pub struct UpstreamService {
     upstream_client: Client<UnixConnector, Incoming>,
-    domains: PeerMap,
+    domains: UpstreamMap,
 }
 
 impl UpstreamService {
-    pub fn new(domains: PeerMap, client: Client<UnixConnector, Incoming>) -> Self {
+    pub fn new(domains: UpstreamMap, client: Client<UnixConnector, Incoming>) -> Self {
         debug!("new upstream service");
         Self {
             domains,

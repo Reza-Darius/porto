@@ -1,15 +1,19 @@
+use std::error::Error;
 use std::io::ErrorKind;
 use std::os::unix::net::SocketAddr as UdsSocketAddr;
 use std::{env, net::SocketAddr, sync::Arc, time::Duration};
 
 use anyhow::Result;
-use hyper::StatusCode;
+use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioExecutor;
 use hyper_util::server::conn::auto::Builder;
+use hyper_util::server::graceful::Watcher;
 use hyper_util::{rt::TokioIo, service::TowerToHyperService};
 use tikv_jemallocator::Jemalloc;
+use tokio::net::TcpStream;
 use tokio::select;
 use tokio::time::Instant;
+use tokio_rustls::TlsAcceptor;
 use tower::ServiceBuilder;
 use tower_http::{timeout::TimeoutLayer, trace::TraceLayer};
 use tracing::{debug, error};
@@ -41,13 +45,13 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    let domains = PeerMap::new(&[
+    let domains = UpstreamMap::new(&[
         (
-            "darius.dev",
+            Domain::parse("darius.dev").unwrap(),
             PeerAddr::Uds(UdsSocketAddr::from_pathname("/tmp/darius_dev.sock").unwrap()),
         ),
         (
-            "RezaDarius.de",
+            Domain::parse("RezaDarius.de").unwrap(),
             PeerAddr::Uds(UdsSocketAddr::from_pathname("/tmp/darius_art.sock").unwrap()),
         ),
     ]);
@@ -128,4 +132,41 @@ async fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+async fn serve_https<S>(stream: TcpStream, tls_acceptor: TlsAcceptor, service: S, watcher: Watcher)
+where
+    S: hyper::service::Service<hyper::Request<hyper::body::Incoming>, Response = Response<Body>>,
+    S::Future: Send + 'static,
+    S::Error: Send + Sync + 'static + Error,
+{
+    // TLS handshake
+    let t = Instant::now();
+    let tls_stream = match tls_acceptor.accept(stream).await {
+        Ok(tls_stream) => tls_stream,
+        Err(e) => {
+            error!(?e, "failed to perform tls handshake");
+            return;
+        }
+    };
+    debug!(duration_ms = t.elapsed().as_millis(), "TLS handshake time");
+
+    // compatiblity conversions
+    let stream = TokioIo::new(tls_stream);
+
+    let builder = Builder::new(TokioExecutor::new());
+    let conn = builder.serve_connection(stream, service);
+    let conn = watcher.watch(conn);
+
+    if let Err(e) = conn.await {
+        // ignoring rustls EOF errors
+        if let Some(e) = e.downcast_ref::<std::io::Error>() {
+            if e.kind() == ErrorKind::UnexpectedEof {
+            } else {
+                error!("got MyError: {:?}", e);
+            }
+        } else {
+            error!(e, "error when serving connection");
+        }
+    };
 }
