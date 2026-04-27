@@ -1,17 +1,24 @@
-use std::{collections::HashMap, sync::Arc};
-
 use anyhow::Result;
 use http_body_util::BodyExt;
 use hyper::Version;
 use hyper::body::Incoming;
 use hyper::{Request, Response};
 use hyper_util::client::legacy::Client;
+use hyper_util::rt::TokioTimer;
 use hyperlocal::{UnixConnector, Uri};
 use tokio::time::Instant;
 use tower::Service;
 use tracing::{debug, error, warn};
 
 use crate::utils::*;
+
+pub fn setup_client() -> Client<UnixConnector, Incoming> {
+    Client::builder(hyper_util::rt::TokioExecutor::new())
+        .pool_idle_timeout(std::time::Duration::from_secs(30))
+        .pool_timer(TokioTimer::new())
+        .pool_max_idle_per_host(32) // Tune based on your backend
+        .build(UnixConnector)
+}
 
 #[derive(Debug, Clone)]
 pub struct UpstreamService {

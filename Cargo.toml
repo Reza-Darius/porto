@@ -15,7 +15,7 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
 http-body-util = "0.1"
 hyper = { version = "1.0.0", features = ["full"] }
-hyper-util = { version = "0.1", features = ["full"] }
+hyper-util = { version = "0.1", features = ["client", "full"] }
 thiserror = "2.0.18"
 anyhow = "1.0.102"
 hyper-rustls = "0.27.7"

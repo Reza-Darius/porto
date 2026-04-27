@@ -4,15 +4,14 @@ use std::{
     future::Ready,
     path::{Path, PathBuf},
     sync::Arc,
-    time::Duration,
 };
 
 use anyhow::{Result, anyhow};
 use bincode::config::Configuration;
 use hyper::{Request, Response, StatusCode, body::Incoming};
 use instant_acme::{
-    Account, AccountBuilder, AccountCredentials, AuthorizationStatus, ChallengeType, Identifier,
-    KeyAuthorization, LetsEncrypt, NewAccount, NewOrder, OrderStatus, RetryPolicy,
+    Account, AccountCredentials, AuthorizationStatus, ChallengeType, Identifier, KeyAuthorization,
+    LetsEncrypt, NewAccount, NewOrder, OrderStatus, RetryPolicy,
 };
 use parking_lot::Mutex;
 use rustls::{
@@ -25,7 +24,7 @@ use rustls::{
 use time::OffsetDateTime;
 use tokio_rustls::TlsAcceptor;
 use tower::Service;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, instrument, warn};
 use x509_parser::pem::parse_x509_pem;
 
 use crate::utils::*;
@@ -35,6 +34,7 @@ const RENEWAL_THRESHHOLD: i64 = 60 * 60 * 24 * RENEWAL_THRESHOLD_DAYS;
 const CHECK_INTERVAL_HOURS: u64 = 24;
 
 /// Create the ACME order based on the given domain names.
+#[instrument(err, skip_all)]
 async fn issue_order(store: TlsService, account: &Account, domains: &[Domain]) -> Result<()> {
     let domains: Vec<_> = domains.to_vec();
     let identifier: Vec<_> = domains
@@ -131,7 +131,7 @@ pub struct AcmeService {
 }
 
 impl AcmeService {
-    fn new(store: TlsService) -> Self {
+    fn init(store: TlsService) -> Self {
         tokio::spawn(acme_worker(store.clone()));
         AcmeService { store }
     }
@@ -298,37 +298,18 @@ impl TlsService {
     }
 }
 
+#[instrument(err)]
 async fn acme_test_acc() -> Result<Account> {
     let acc = NewAccount {
-        contact: &["test@email.com"],
+        contact: &["mailto:test@email.com"],
         terms_of_service_agreed: true,
         only_return_existing: false,
     };
 
-    let certs = CertificateDer::pem_file_iter("pebble/test/certs/pebble.minica.pem")?
-        .collect::<Result<Vec<_>, _>>()?;
-
-    let mut roots = rustls::RootCertStore::empty();
-    roots.add_parsable_certificates(certs);
-
-    let tls_config = rustls::ClientConfig::builder()
-        .with_root_certificates(roots)
-        .with_no_client_auth();
-
-    let connector = hyper_rustls::HttpsConnectorBuilder::new()
-        .with_tls_config(tls_config)
-        .https_only()
-        .enable_http1()
-        .build();
-
-    let client = Box::new(
-        hyper_util::client::legacy::Client::builder(hyper_util::rt::TokioExecutor::new())
-            .build(connector),
-    );
-
-    let acc = Account::builder_with_http(client)
-        .create(&acc, LetsEncrypt::Production.url().to_string(), None)
+    let acc = Account::builder_with_root("pebble.minica.pem")?
+        .create(&acc, "https://localhost:14000/dir".to_string(), None)
         .await?;
+    debug!("we got an account");
 
     Ok(acc.0)
 }
@@ -377,26 +358,33 @@ async fn get_acme_acc(cred_path: &Path) -> Result<Account> {
 }
 
 async fn acme_worker(store: TlsService) {
-    let account = get_acme_acc(&store.inner.cred_path).await.unwrap();
-    let mut timer = tokio::time::interval(Duration::from_hours(CHECK_INTERVAL_HOURS));
-
-    loop {
-        timer.tick().await;
-
-        // TODO: some sort watcher channel for newly added domains when the server is running
-
-        if let Some(domains) = store.check_new_domains() {
-            let _ = issue_order(store.clone(), &account, &domains)
-                .await
-                .inspect_err(|e| error!(%e, "ACME error"));
-        }
-
-        if let Some(domains) = store.check_certs() {
-            let _ = issue_order(store.clone(), &account, &domains)
-                .await
-                .inspect_err(|e| error!(%e, "ACME error"));
-        }
+    let account = acme_test_acc().await.unwrap();
+    if let Some(domains) = store.check_new_domains() {
+        let _ = issue_order(store.clone(), &account, &domains)
+            .await
+            .inspect_err(|e| error!(%e, "ACME error"));
     }
+
+    // let account = get_acme_acc(&store.inner.cred_path).await.unwrap();
+    // let mut timer = tokio::time::interval(Duration::from_hours(CHECK_INTERVAL_HOURS));
+
+    // loop {
+    //     timer.tick().await;
+
+    //     // TODO: some sort watcher channel for newly added domains when the server is running
+
+    //     if let Some(domains) = store.check_new_domains() {
+    //         let _ = issue_order(store.clone(), &account, &domains)
+    //             .await
+    //             .inspect_err(|e| error!(%e, "ACME error"));
+    //     }
+
+    //     if let Some(domains) = store.check_certs() {
+    //         let _ = issue_order(store.clone(), &account, &domains)
+    //             .await
+    //             .inspect_err(|e| error!(%e, "ACME error"));
+    //     }
+    // }
 }
 
 fn should_renew(cert_pem: &CertChainPem) -> bool {
@@ -473,6 +461,7 @@ impl Resolver {
 impl server::ResolvesServerCert for Resolver {
     fn resolve(&self, client_hello: ClientHello<'_>) -> Option<Arc<sign::CertifiedKey>> {
         if let Some(name) = client_hello.server_name() {
+            debug!("resolving {name}");
             self.inner.lock().get(name).cloned()
         } else {
             // This kind of resolver requires SNI
@@ -493,32 +482,6 @@ mod tests {
 
     use super::*;
 
-    fn test_certs() -> anyhow::Result<()> {
-        let ca_key = KeyPair::generate()?;
-        let mut distinguished_name = DistinguishedName::new();
-        distinguished_name.push(DnType::CommonName, "Pebble CA".to_owned());
-        let mut ca_params = rcgen::CertificateParams::default();
-        ca_params.distinguished_name = distinguished_name;
-        ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-
-        let issuer = CertifiedIssuer::self_signed(ca_params, ca_key)?;
-        fs::write("testdata/ca.pem", issuer.as_ref().pem())?;
-
-        let ee_key = KeyPair::generate()?;
-        fs::write("testdata/server.key", ee_key.serialize_pem())?;
-
-        let mut ee_params = rcgen::CertificateParams::new([
-            "localhost".to_owned(),
-            "127.0.0.1".to_owned(),
-            "::1".to_owned(),
-        ])?;
-        ee_params.distinguished_name = DistinguishedName::new();
-        let ee_cert = ee_params.signed_by(&ee_key, &issuer)?;
-        fs::write("testdata/server.pem", ee_cert.pem())?;
-
-        Ok(())
-    }
-
     #[tokio::test]
     async fn acme_test() -> Result<()> {
         tracing_subscriber::fmt()
@@ -528,7 +491,7 @@ mod tests {
             )
             .init();
 
-        let addr = "127.0.0.1:4000";
+        let addr = "0.0.0.0:5002"; // port for pebble ACME server
         let cred_path = "credentials/";
 
         let domains = UpstreamMap::new(&[
@@ -544,15 +507,21 @@ mod tests {
 
         let listener = tokio::net::TcpListener::bind(addr).await?;
         let tls = TlsService::init(cred_path, domains).unwrap();
-        let service = TowerToHyperService::new(AcmeService::new(tls.clone()));
+        let service = TowerToHyperService::new(AcmeService::init(tls.clone()));
 
-        info!("test ACME server listening on 127.0.0.1");
+        info!("test ACME server listening on {addr}");
 
         while let Ok((con, _)) = listener.accept().await {
             if is_tls(&con).await {
+                debug!("we got a TLS connection");
                 let acceptor = tls.get_acceptor();
-                let mut s = acceptor.accept(con).await?;
-                s.write_all(b"HTTP/1.1 200 OK\r\n").await?;
+                match acceptor.accept(con).await {
+                    Ok(mut s) => {
+                        debug!("TLS established");
+                        let _ = s.write_all(b"HTTP/1.1 200 OK\r\n\r\n").await;
+                    }
+                    Err(e) => error!(%e, "error when accepting TLS"),
+                };
                 continue;
             }
 

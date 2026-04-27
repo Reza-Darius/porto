@@ -5,8 +5,7 @@ use hyper::StatusCode;
 use hyper_util::rt::TokioExecutor;
 use hyper_util::server::conn::auto::Builder;
 use hyper_util::{rt::TokioIo, service::TowerToHyperService};
-use proxy::pool::new_backend_client;
-use proxy::services::custom_pool::UpstreamBackend;
+use proxy::services::custom_pool::UpstreamService;
 use tokio::select;
 use tokio::time::Instant;
 use tower::ServiceBuilder;
@@ -14,6 +13,7 @@ use tower_http::{timeout::TimeoutLayer, trace::TraceLayer};
 use tracing::{debug, error};
 use tracing_subscriber::EnvFilter;
 
+use proxy::services::custom_pool::*;
 use proxy::setup::*;
 use proxy::utils::*;
 
@@ -41,9 +41,7 @@ async fn main() -> Result<()> {
         ("RezaDarius.de", "/tmp/darius_art.sock"),
     ];
 
-    let client = new_backend_client(&domains);
-
-    // Create a TCP listener via tokio.
+    let client = setup_client(&domains);
     let listener = setup_listener(addr);
     let tls_acceptor = setup_tls_from_file(SERVER_CERT_PATH, SERVER_KEY_PATH)?;
 
@@ -54,7 +52,7 @@ async fn main() -> Result<()> {
             StatusCode::REQUEST_TIMEOUT,
             Duration::from_secs(20),
         ))
-        .service(UpstreamBackend::new(client));
+        .service(UpstreamService::new(client));
 
     let service = TowerToHyperService::new(service);
 

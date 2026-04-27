@@ -1,7 +1,4 @@
 use anyhow::{Result, anyhow};
-use hyper::body::Incoming;
-use hyper_util::{client::legacy::Client, rt::TokioTimer};
-use hyperlocal::UnixConnector;
 use rustls::{
     ServerConfig,
     pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
@@ -36,14 +33,6 @@ pub fn setup_tls_from_file(certs: impl AsRef<Path>, key: impl AsRef<Path>) -> Re
     server_config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec(), b"http/1.0".to_vec()];
 
     Ok(TlsAcceptor::from(Arc::new(server_config)))
-}
-
-pub fn setup_client() -> Client<UnixConnector, Incoming> {
-    Client::builder(hyper_util::rt::TokioExecutor::new())
-        .pool_idle_timeout(std::time::Duration::from_secs(30))
-        .pool_timer(TokioTimer::new())
-        .pool_max_idle_per_host(32) // Tune based on your backend
-        .build(UnixConnector)
 }
 
 pub fn setup_listener(addr: impl Into<SocketAddr>) -> TcpListener {
