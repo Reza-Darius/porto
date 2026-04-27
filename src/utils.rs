@@ -293,6 +293,7 @@ impl KeyPem {
 }
 
 #[derive(Debug, Clone, AsRef, Display, Hash, Eq, PartialEq, PartialOrd, Ord, From)]
+#[serde(transparent)]
 pub struct AcmeToken(String);
 
 impl AcmeToken {
