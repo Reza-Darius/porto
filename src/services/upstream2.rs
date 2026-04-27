@@ -122,9 +122,10 @@ impl Manager for UdsConPool {
     ) -> impl Future<Output = RecycleResult<Self::Error>> + Send {
         debug!(metrics.recycle_count, "pool:");
 
-        let ready = obj.is_ready() && !obj.is_closed();
+        let reusable = !obj.is_closed();
+
         async move {
-            if ready {
+            if reusable {
                 debug!("pool: recycling connection");
                 Ok(())
             } else {

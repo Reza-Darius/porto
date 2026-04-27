@@ -5,7 +5,7 @@ use hyper::StatusCode;
 use hyper_util::rt::TokioExecutor;
 use hyper_util::server::conn::auto::Builder;
 use hyper_util::{rt::TokioIo, service::TowerToHyperService};
-use proxy::services::custom_pool::UpstreamService;
+use proxy::services::upstream2::UpstreamService;
 use tokio::select;
 use tokio::time::Instant;
 use tower::ServiceBuilder;
@@ -13,7 +13,7 @@ use tower_http::{timeout::TimeoutLayer, trace::TraceLayer};
 use tracing::{debug, error};
 use tracing_subscriber::EnvFilter;
 
-use proxy::services::custom_pool::*;
+use proxy::services::upstream2::*;
 use proxy::setup::*;
 use proxy::utils::*;
 

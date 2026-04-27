@@ -38,7 +38,7 @@ impl UpstreamService {
 
 impl Service<Request<Incoming>> for UpstreamService {
     type Response = Response<Body>;
-    type Error = std::convert::Infallible;
+    type Error = hyper::Error;
     type Future = BoxFut<Self::Response, Self::Error>;
 
     fn poll_ready(
@@ -74,7 +74,7 @@ impl Service<Request<Incoming>> for UpstreamService {
                     .expect("unnamed sockets arent supported"),
             };
 
-            strip_header(req.headers_mut());
+            adjust_header(&mut req);
 
             if req.version() == Version::HTTP_2 {
                 let (mut parts, body) = req.into_parts();

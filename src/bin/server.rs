@@ -1,23 +1,19 @@
-use std::error::Error;
 use std::io::ErrorKind;
-use std::os::unix::net::SocketAddr as UdsSocketAddr;
 use std::{env, net::SocketAddr, time::Duration};
 
 use anyhow::Result;
-use hyper::body::Body;
-use hyper::{Response, StatusCode};
+use http_body_util::BodyExt;
+use hyper::{Request, StatusCode};
 use hyper_util::rt::TokioExecutor;
 use hyper_util::server::conn::auto::Builder;
-use hyper_util::server::graceful::Watcher;
 use hyper_util::{rt::TokioIo, service::TowerToHyperService};
+use tap::Pipe;
 use tikv_jemallocator::Jemalloc;
-use tokio::net::TcpStream;
 use tokio::select;
 use tokio::time::Instant;
-use tokio_rustls::TlsAcceptor;
-use tower::ServiceBuilder;
+use tower::{ServiceBuilder, ServiceExt};
 use tower_http::{timeout::TimeoutLayer, trace::TraceLayer};
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 use tracing_subscriber::EnvFilter;
 
 use proxy::services::upstream::*;
@@ -40,56 +36,50 @@ async fn main() -> Result<()> {
         .parse::<SocketAddr>()?;
 
     tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env()
-                .or_else(|_| EnvFilter::try_new("proxy=error,tower_http=warn"))?,
-        )
+        .with_env_filter(EnvFilter::from_default_env())
+        .with_target(false)
         .init();
 
-    let domains = UpstreamMap::new(&[
-        (
-            Domain::parse("darius.dev").unwrap(),
-            PeerAddr::Uds(UdsSocketAddr::from_pathname("/tmp/darius_dev.sock").unwrap()),
-        ),
-        (
-            Domain::parse("RezaDarius.de").unwrap(),
-            PeerAddr::Uds(UdsSocketAddr::from_pathname("/tmp/darius_art.sock").unwrap()),
-        ),
-    ]);
+    let domains = UpstreamMap::try_from(&[
+        ("darius.dev", "/tmp/darius_dev.sock"),
+        ("RezaDarius.de", "/tmp/darius_art.sock"),
+    ])?;
+
+    debug!(?domains, "parsed domains");
+
+    // let domains = UpstreamMap::new(&[
+    //     (
+    //         Domain::parse("darius.dev").unwrap(),
+    //         PeerAddr::Uds(UdsSocketAddr::from_pathname("/tmp/darius_dev.sock").unwrap()),
+    //     ),
+    //     (
+    //         Domain::parse("RezaDarius.de").unwrap(),
+    //         PeerAddr::Uds(UdsSocketAddr::from_pathname("/tmp/darius_art.sock").unwrap()),
+    //     ),
+    // ]);
 
     let client = setup_client();
     let listener = setup_listener(addr);
     let tls_acceptor = setup_tls_from_file(SERVER_CERT_PATH, SERVER_KEY_PATH)?;
-
-    let service = ServiceBuilder::new()
-        // .layer(ConcurrencyLimitLayer::new(100))
-        .layer(TraceLayer::new_for_http())
-        .layer(TimeoutLayer::with_status_code(
-            StatusCode::REQUEST_TIMEOUT,
-            Duration::from_secs(20),
-        ))
-        .service(UpstreamService::new(domains, client));
-
-    let service = TowerToHyperService::new(service);
+    let service = setup_service(domains, client);
 
     let graceful = hyper_util::server::graceful::GracefulShutdown::new();
     let mut signal = std::pin::pin!(shutdown_signal());
 
-    println!("listening on {addr}");
+    info!("listening on {addr}");
 
     loop {
-        // move clones
         let tls_acceptor = tls_acceptor.clone();
         let watcher = graceful.watcher();
         let service = service.clone();
 
         select! {
-            Ok((tcp_stream, _)) = listener.accept() => {
+            Ok((tcp_stream, addr)) = listener.accept() => {
                 tokio::spawn(async move {
                     // TLS handshake
                     let t = Instant::now();
                     let tls_stream = match tls_acceptor.accept(tcp_stream).await {
-                        Ok(tls_stream) => tls_stream,
+                        Ok(tls_stream) => TokioIo::new(tls_stream),
                         Err(e) => {
                             error!(?e, "failed to perform tls handshake");
                             return;
@@ -97,12 +87,17 @@ async fn main() -> Result<()> {
                     };
                     debug!(duration_ms = t.elapsed().as_millis(), "TLS handshake time");
 
-                    // compatiblity conversions
-                    let stream = TokioIo::new(tls_stream);
+                    // attaching infos for rate limiting
+                    let service = service
+                        .clone()
+                        .map_request(move |mut req: Request<_>| {
+                            req.extensions_mut().insert(addr);
+                            req
+                        }).pipe(TowerToHyperService::new);
+
 
                     let builder = Builder::new(TokioExecutor::new());
-                    let conn = builder.serve_connection(stream, service);
-                    let conn = watcher.watch(conn);
+                    let conn = builder.serve_connection(tls_stream, service).pipe(|c| watcher.watch(c));
 
                     if let Err(e) = conn.await {
                         // ignoring rustls EOF errors
@@ -118,7 +113,7 @@ async fn main() -> Result<()> {
             }
             _ = &mut signal => {
                 drop(listener);
-                eprintln!("shutting down server");
+                info!("shutting down server");
                 break;
             }
         }
@@ -126,11 +121,27 @@ async fn main() -> Result<()> {
 
     select! {
         _ = graceful.shutdown() => {
-            eprintln!("all connections closed");
+            info!("all connections closed");
         },
         _ = tokio::time::sleep(std::time::Duration::from_secs(10)) => {
-            eprintln!("timed out wait for all connections to close");
+            info!("timed out wait for all connections to close");
         }
     }
     Ok(())
+}
+
+fn setup_service(
+    domains: UpstreamMap,
+    client: hyper_util::client::legacy::Client<hyperlocal::UnixConnector, hyper::body::Incoming>,
+) -> HyperService {
+    ServiceBuilder::new()
+        // .layer(ConcurrencyLimitLayer::new(100))
+        .layer(TraceLayer::new_for_http())
+        .layer(TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            Duration::from_secs(20),
+        ))
+        .service(UpstreamService::new(domains, client))
+        .map_response(|resp| resp.map(|body| body.boxed()))
+        .boxed_clone()
 }

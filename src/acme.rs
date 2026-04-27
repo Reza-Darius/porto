@@ -21,11 +21,12 @@ use rustls::{
     server::{self, ClientHello, ParsedCertificate},
     sign::{self, CertifiedKey},
 };
+use tap::prelude::*;
 use time::OffsetDateTime;
 use tokio_rustls::TlsAcceptor;
 use tower::Service;
 use tracing::{debug, error, info, instrument, warn};
-use x509_parser::pem::parse_x509_pem;
+use x509_parser::pem::{Pem, parse_x509_pem};
 
 use crate::utils::*;
 
@@ -33,9 +34,12 @@ const RENEWAL_THRESHOLD_DAYS: i64 = 30;
 const RENEWAL_THRESHHOLD: i64 = 60 * 60 * 24 * RENEWAL_THRESHOLD_DAYS;
 const CHECK_INTERVAL_HOURS: u64 = 24;
 
+const CERT_FILENAME: &str = "cert.pem";
+const KEY_FILENAME: &str = "key.pem";
+
 /// Create the ACME order based on the given domain names.
 #[instrument(err, skip_all)]
-async fn issue_order(store: TlsService, account: &Account, domains: &[Domain]) -> Result<()> {
+async fn issue_order(store: PortoTLS, account: &Account, domains: &[Domain]) -> Result<()> {
     let domains: Vec<_> = domains.to_vec();
     let identifier: Vec<_> = domains
         .iter()
@@ -77,13 +81,13 @@ async fn issue_order(store: TlsService, account: &Account, domains: &[Domain]) -
 
     let state = order.state();
     if state.status != OrderStatus::Pending {
-        return Err(anyhow::anyhow!("unexpected order state: {state:?}"));
+        return Err(anyhow!("unexpected order state: {state:?}"));
     };
 
     // Exponentially back off until the order becomes ready or invalid.
     let status = order.poll_ready(&RetryPolicy::default()).await?;
     if status != OrderStatus::Ready {
-        return Err(anyhow::anyhow!("unexpected order status: {status:?}"));
+        return Err(anyhow!("unexpected order status: {status:?}"));
     }
 
     // Finalize the order and print certificate chain, private key and account credentials.
@@ -99,13 +103,13 @@ async fn issue_order(store: TlsService, account: &Account, domains: &[Domain]) -
     }
 
     tokio::fs::write(
-        store.inner.cred_path.join("key.pem"),
+        store.inner.cred_path.join(KEY_FILENAME),
         key.as_str().as_bytes(),
     )
     .await?;
 
     tokio::fs::write(
-        store.inner.cred_path.join("cert.pem"),
+        store.inner.cred_path.join(CERT_FILENAME),
         cert.as_str().as_bytes(),
     )
     .await?;
@@ -120,24 +124,25 @@ async fn issue_order(store: TlsService, account: &Account, domains: &[Domain]) -
         }
     }
 
-    info!("ACME order completed\n{}\n{}", cert, key);
+    info!("ACME order completed");
+    debug!("\n{}\n{}", cert, key);
 
     Ok(())
 }
 
 #[derive(Debug, Clone)]
-pub struct AcmeService {
-    store: TlsService,
+pub struct AcmeChallengeService {
+    store: PortoTLS,
 }
 
-impl AcmeService {
-    fn init(store: TlsService) -> Self {
+impl AcmeChallengeService {
+    fn init(store: PortoTLS) -> Self {
         tokio::spawn(acme_worker(store.clone()));
-        AcmeService { store }
+        AcmeChallengeService { store }
     }
 }
 
-impl Service<Request<Incoming>> for AcmeService {
+impl Service<Request<Incoming>> for AcmeChallengeService {
     type Response = Response<Body>;
     type Error = hyper::Error;
 
@@ -176,12 +181,12 @@ impl Service<Request<Incoming>> for AcmeService {
 
 /// clonable handler
 #[derive(Debug, Clone)]
-pub struct TlsService {
-    inner: Arc<TlsServiceInner>,
+pub struct PortoTLS {
+    inner: Arc<PortoTLSInner>,
 }
 
 #[derive(Debug)]
-struct TlsServiceInner {
+struct PortoTLSInner {
     cred_path: PathBuf,
     // table of registered domains in the proxy
     peers: UpstreamMap,
@@ -193,7 +198,7 @@ struct TlsServiceInner {
     resolver: Arc<Resolver>,
 }
 
-impl TlsService {
+impl PortoTLS {
     pub fn init(cred_path: impl Into<PathBuf>, peers: UpstreamMap) -> Result<Self> {
         let path = cred_path.into();
 
@@ -217,8 +222,8 @@ impl TlsService {
         server_config.alpn_protocols =
             vec![b"h2".to_vec(), b"http/1.1".to_vec(), b"http/1.0".to_vec()];
 
-        Ok(TlsService {
-            inner: Arc::new(TlsServiceInner {
+        Ok(PortoTLS {
+            inner: Arc::new(PortoTLSInner {
                 cred_path: path,
                 peers,
                 certs: Mutex::new(HashMap::new()),
@@ -296,6 +301,35 @@ impl TlsService {
     pub fn get_acceptor(&self) -> TlsAcceptor {
         TlsAcceptor::from(self.inner.config.clone())
     }
+
+    fn load_certs_from_file(&self) -> Result<()> {
+        let path = &self.inner.cred_path;
+        debug!(?path, "loading certs from file");
+
+        let cert = load_pem_file(path.join(CERT_FILENAME))?;
+        let cert = cert.parse_x509()?;
+
+        let key = load_pem_file(path.join(KEY_FILENAME))?;
+        let key = key.parse_x509()?;
+
+        debug!(issuer = %cert.issuer(), "found certificate");
+        Ok(())
+    }
+}
+
+fn load_pem_file(path: impl AsRef<Path>) -> Result<Pem> {
+    let pem = path
+        .as_ref()
+        .pipe(|path| {
+            if path.exists() {
+                Ok(path)
+            } else {
+                Err(anyhow!("couldnt find cert.pem"))
+            }
+        })?
+        .pipe(std::fs::read)?
+        .pipe_as_ref(|file| parse_x509_pem(file).map(|(_, pem)| pem))?;
+    Ok(pem)
 }
 
 #[instrument(err)]
@@ -314,8 +348,8 @@ async fn acme_test_acc() -> Result<Account> {
     Ok(acc.0)
 }
 
-async fn get_acme_acc(cred_path: &Path) -> Result<Account> {
-    let path = Path::new(cred_path).join("account");
+async fn get_acme_acc(cred_path: impl AsRef<Path>) -> Result<Account> {
+    let path = Path::new(cred_path.as_ref()).join("account");
     let config = bincode::config::standard();
 
     if path.exists() {
@@ -357,13 +391,19 @@ async fn get_acme_acc(cred_path: &Path) -> Result<Account> {
     Ok(account)
 }
 
-async fn acme_worker(store: TlsService) {
+async fn acme_worker(store: PortoTLS) {
     let account = acme_test_acc().await.unwrap();
+
+    match store.load_certs_from_file() {
+        Ok(_) => info!("loaded certs from file"),
+        Err(e) => warn!(%e, "couldnt load certs from file"),
+    };
+
     if let Some(domains) = store.check_new_domains() {
         let _ = issue_order(store.clone(), &account, &domains)
             .await
             .inspect_err(|e| error!(%e, "ACME error"));
-    }
+    };
 
     // let account = get_acme_acc(&store.inner.cred_path).await.unwrap();
     // let mut timer = tokio::time::interval(Duration::from_hours(CHECK_INTERVAL_HOURS));
@@ -475,8 +515,7 @@ mod tests {
     use hyper::server::conn::http1::Builder;
     use hyper_util::rt::TokioIo;
     use hyper_util::service::TowerToHyperService;
-    use rcgen::{BasicConstraints, CertifiedIssuer, DistinguishedName, DnType, IsCa, KeyPair};
-    use std::{fs, os::unix::net::SocketAddr as UdsSocketAddr};
+    use std::os::unix::net::SocketAddr as UdsSocketAddr;
     use tokio::io::AsyncWriteExt;
     use tracing_subscriber::EnvFilter;
 
@@ -506,8 +545,8 @@ mod tests {
         ]);
 
         let listener = tokio::net::TcpListener::bind(addr).await?;
-        let tls = TlsService::init(cred_path, domains).unwrap();
-        let service = TowerToHyperService::new(AcmeService::init(tls.clone()));
+        let tls = PortoTLS::init(cred_path, domains).unwrap();
+        let service = TowerToHyperService::new(AcmeChallengeService::init(tls.clone()));
 
         info!("test ACME server listening on {addr}");
 

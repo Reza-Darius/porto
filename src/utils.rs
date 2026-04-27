@@ -1,26 +1,32 @@
-use addr::parse_domain_name;
-use anyhow::{Result, anyhow};
-use derive_more::{AsRef, Display, Eq, From};
-use http_body_util::{BodyExt, Full};
-use hyper::header::HOST;
-use hyper::{HeaderMap, Request, Response, StatusCode, Version};
-use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::net::Ipv4Addr;
-use std::pin::Pin;
-use tokio::net::TcpStream;
-use tracing::debug;
-
-use http_body_util::{Empty, combinators::BoxBody};
-use hyper::body::Bytes;
+use std::net::SocketAddr as IpSockAddr;
 use std::os::unix::net::SocketAddr;
+use std::pin::Pin;
 use std::sync::Arc;
+
+use addr::parse_domain_name;
+use anyhow::{Result, anyhow};
+use derive_more::{AsRef, Display, Eq, From};
+use http_body_util::{BodyExt, Full};
+use http_body_util::{Empty, combinators::BoxBody};
+use hyper::body::{Bytes, Incoming};
+use hyper::header::HOST;
+use hyper::header::HeaderValue;
+use hyper::{HeaderMap, Request, Response, StatusCode, Version};
+use serde::{Deserialize, Serialize};
+use tokio::net::TcpStream;
 use tokio::net::unix::UCred;
+use tower::util::BoxCloneService;
+use tracing::debug;
+use tracing::trace;
+use url::Url;
 
 pub type BoxFut<R, E> = Pin<Box<dyn Future<Output = std::result::Result<R, E>> + Send>>;
 pub type Body = BoxBody<Bytes, hyper::Error>;
+pub type HyperService = BoxCloneService<Request<Incoming>, Response<Body>, hyper::Error>;
 
 // We create some utility functions to make Empty and Full bodies
 // fit our broadened Response body type.
@@ -77,6 +83,7 @@ pub fn internal_error() -> Response<Body> {
 
 pub fn get_host<B>(req: &Request<B>) -> Result<&str> {
     let header = req.headers();
+    // which dumbass wrote this?
     match req.version() {
         Version::HTTP_2 => {
             if let Some(host) = header.get(HOST) {
@@ -127,8 +134,24 @@ pub fn get_host<B>(req: &Request<B>) -> Result<&str> {
     }
 }
 
+pub fn adjust_header<B>(req: &mut Request<B>) {
+    strip_header(req.headers_mut());
+
+    if let Some(client_addr) = req.extensions().get::<IpSockAddr>().cloned() {
+        debug!("adjusting header with {client_addr}");
+
+        if let Ok(addr) = HeaderValue::from_str(&client_addr.to_string()) {
+            req.headers_mut().insert("X-Forwarded-For", addr);
+        } else {
+            tracing::error!("couldnt create header value from sock addr");
+        };
+    };
+}
+
 pub fn strip_header(headers: &mut HeaderMap) {
     use hyper::header;
+    trace!("stripping header");
+
     headers.remove(header::CONNECTION);
     headers.remove(header::TRANSFER_ENCODING);
     headers.remove(header::TE);
@@ -172,6 +195,26 @@ impl UpstreamMap {
     }
 }
 
+impl<const N: usize> TryFrom<&[(&str, &str); N]> for UpstreamMap {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &[(&str, &str); N]) -> std::result::Result<Self, Self::Error> {
+        let map = value
+            .iter()
+            .map(|(domain, addr)| {
+                Ok::<_, anyhow::Error>((
+                    Domain::parse(domain)?,
+                    PeerAddr::Uds(SocketAddr::from_pathname(addr)?),
+                ))
+            })
+            .collect::<Result<_, _>>()?;
+
+        Ok(UpstreamMap {
+            inner: Arc::new(UpstreamMapInner { map }),
+        })
+    }
+}
+
 impl Display for UpstreamMap {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for (domain, peer) in self.inner.map.iter() {
@@ -196,11 +239,18 @@ pub enum PeerAddr {
 pub struct Domain(Arc<str>);
 
 impl Domain {
-    pub fn parse(str: impl AsRef<str>) -> Result<Self> {
-        match parse_domain_name(str.as_ref()) {
-            Ok(_) => Ok(Domain(Arc::from(str.as_ref()))),
-            Err(e) => Err(anyhow!("domain parse error {e}")),
-        }
+    pub fn parse(domain: impl AsRef<str>) -> Result<Self> {
+        parse_domain_name(domain.as_ref())
+            .map_err(|e| anyhow!("{e}"))?
+            .root()
+            .ok_or_else(|| anyhow!("couldnt extract root from domain name"))
+            .map(|dm| Domain(Arc::from(dm)))
+
+        // Url::parse(url.as_ref())?
+        //     .host_str()
+        //     .ok_or_else(|| anyhow!("couldnt extract host identifier from {}", url.as_ref()))
+        //     .map(Arc::from)
+        //     .map(Domain)
     }
 
     pub fn as_str(&self) -> &str {
