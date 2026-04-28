@@ -22,7 +22,6 @@ use tokio::net::unix::UCred;
 use tower::util::BoxCloneService;
 use tracing::debug;
 use tracing::trace;
-use url::Url;
 
 pub type BoxFut<R, E> = Pin<Box<dyn Future<Output = std::result::Result<R, E>> + Send>>;
 pub type Body = BoxBody<Bytes, hyper::Error>;
@@ -293,7 +292,6 @@ impl KeyPem {
 }
 
 #[derive(Debug, Clone, AsRef, Display, Hash, Eq, PartialEq, PartialOrd, Ord, From)]
-#[serde(transparent)]
 pub struct AcmeToken(String);
 
 impl AcmeToken {
