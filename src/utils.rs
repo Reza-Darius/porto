@@ -1,9 +1,7 @@
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::fmt::Display;
-use std::net::Ipv4Addr;
 use std::net::SocketAddr as IpSockAddr;
-use std::os::unix::net::SocketAddr;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::str::FromStr;
@@ -50,6 +48,13 @@ pub fn full<T: Into<Bytes>>(chunk: T) -> Body {
 struct UdsConnectInfo {
     peer_addr: Arc<tokio::net::unix::SocketAddr>,
     peer_cred: UCred,
+}
+
+pub fn setup_tracing() {
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_target(false)
+        .init();
 }
 
 pub async fn shutdown_signal() {

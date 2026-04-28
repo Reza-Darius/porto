@@ -3,27 +3,26 @@ use rustls::{
     ServerConfig,
     pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
 };
-use std::{net::SocketAddr, path::Path, sync::Arc};
+use std::sync::Arc;
 use tokio::net::{TcpListener, TcpSocket};
 
 use tokio_rustls::TlsAcceptor;
 
-pub fn setup_tls_from_file(certs: impl AsRef<Path>, key: impl AsRef<Path>) -> Result<TlsAcceptor> {
+use crate::config::PortoConfig;
+
+pub fn setup_tls_from_file(config: &PortoConfig) -> Result<TlsAcceptor> {
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    let certs = config.cert_path.as_ref().unwrap();
+    let key = config.key_path.as_ref().unwrap();
 
     // Load public certificate.
-    let certs = CertificateDer::pem_file_iter(&certs)?
+    let certs = CertificateDer::pem_file_iter(certs)?
         .collect::<Result<Vec<_>, _>>()
-        .with_context(|| {
-            anyhow!(
-                "could not read certificate file: {}",
-                certs.as_ref().display()
-            )
-        })?;
+        .with_context(|| anyhow!("could not read certificate file: {}", certs.display()))?;
 
     // Load private key.
-    let key = PrivateKeyDer::from_pem_file(&key)
-        .with_context(|| anyhow!("could not read key file: {}", key.as_ref().display()))?;
+    let key = PrivateKeyDer::from_pem_file(key)
+        .with_context(|| anyhow!("could not read key file: {}", key.display()))?;
 
     // TODO
     // let mut resolver = ResolvesServerCertUsingSni::new();
@@ -39,8 +38,8 @@ pub fn setup_tls_from_file(certs: impl AsRef<Path>, key: impl AsRef<Path>) -> Re
     Ok(TlsAcceptor::from(Arc::new(server_config)))
 }
 
-pub fn setup_listener(addr: impl Into<SocketAddr>) -> TcpListener {
-    let addr = addr.into();
+pub fn setup_listener(config: &PortoConfig) -> TcpListener {
+    let addr = config.bind;
     let socket = TcpSocket::new_v4().unwrap();
 
     socket.set_keepalive(true).unwrap();

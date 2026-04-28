@@ -1281,6 +1281,7 @@ dependencies = [
  "hyperlocal",
  "instant-acme",
  "parking_lot",
+ "pin-project-lite",
  "rcgen",
  "reqwest",
  "rustls",

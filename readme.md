@@ -1,9 +1,19 @@
 # porto
 
-a small rust based reverse proxy for my websites
+a simple but fast reverse proxy with TLS termination
 
+## Implemented
 
-- http with hyper
-- async with Tokio
-- TLS support with rustls
-- deadpool for connection pooling
+- Async with Tokio
+- HTTP upstreaming with hyper
+- Deadpool for connection pooling
+- HTTPS support with rustls
+- ACME support for automatic certificate renewal
+- CLI and config file parsing
+- Logging
+
+## WIP
+
+- Response Caching
+- Rate Limiting
+- Health checks

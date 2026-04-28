@@ -1,5 +1,5 @@
 use std::io::ErrorKind;
-use std::{env, net::SocketAddr, time::Duration};
+use std::time::Duration;
 
 use anyhow::Result;
 use http_body_util::BodyExt;
@@ -7,6 +7,7 @@ use hyper::{Request, StatusCode};
 use hyper_util::rt::TokioExecutor;
 use hyper_util::server::conn::auto::Builder;
 use hyper_util::{rt::TokioIo, service::TowerToHyperService};
+use proxy::config::{PortoConfig, setup_config};
 use tap::Pipe;
 use tikv_jemallocator::Jemalloc;
 use tokio::select;
@@ -14,7 +15,6 @@ use tokio::time::Instant;
 use tower::{ServiceBuilder, ServiceExt};
 use tower_http::{timeout::TimeoutLayer, trace::TraceLayer};
 use tracing::{debug, error, info};
-use tracing_subscriber::EnvFilter;
 
 use proxy::services::upstream::*;
 use proxy::setup::*;
@@ -23,50 +23,20 @@ use proxy::utils::*;
 #[global_allocator]
 static GLOBAL: Jemalloc = Jemalloc;
 
-const SERVER_CERT_PATH: &str = "credentials/example_cert.pem";
-const SERVER_KEY_PATH: &str = "credentials/example_key.pem";
-
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args: Vec<String> = env::args().collect();
-    let addr = args
-        .get(1)
-        .map(|s| s.as_str())
-        .unwrap_or_else(|| "127.0.0.1:3000")
-        .parse::<SocketAddr>()?;
+    setup_tracing();
 
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
-        .with_target(false)
-        .init();
+    let config = setup_config()?;
 
-    let domains = UpstreamMap::try_from(&[
-        ("darius.dev", "/tmp/darius_dev.sock"),
-        ("RezaDarius.de", "/tmp/darius_art.sock"),
-    ])?;
-
-    debug!(?domains, "parsed domains");
-
-    // let domains = UpstreamMap::new(&[
-    //     (
-    //         Domain::parse("darius.dev").unwrap(),
-    //         PeerAddr::Uds(UdsSocketAddr::from_pathname("/tmp/darius_dev.sock").unwrap()),
-    //     ),
-    //     (
-    //         Domain::parse("RezaDarius.de").unwrap(),
-    //         PeerAddr::Uds(UdsSocketAddr::from_pathname("/tmp/darius_art.sock").unwrap()),
-    //     ),
-    // ]);
-
-    let client = setup_client();
-    let listener = setup_listener(addr);
-    let tls_acceptor = setup_tls_from_file(SERVER_CERT_PATH, SERVER_KEY_PATH)?;
-    let service = setup_service(domains, client);
+    let listener = setup_listener(&config);
+    let tls_acceptor = setup_tls_from_file(&config)?;
+    let service = setup_service(&config);
 
     let graceful = hyper_util::server::graceful::GracefulShutdown::new();
     let mut signal = std::pin::pin!(shutdown_signal());
 
-    info!("listening on {addr}");
+    info!("listening on {}", config.bind);
 
     loop {
         let tls_acceptor = tls_acceptor.clone();
@@ -130,17 +100,19 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn setup_service(
-    domains: UpstreamMap,
-    client: hyper_util::client::legacy::Client<hyperlocal::UnixConnector, hyper::body::Incoming>,
-) -> HyperService {
-    ServiceBuilder::new()
+fn setup_service(config: &PortoConfig) -> HyperService {
+    let domains = UpstreamMap::new(config);
+    let client = setup_client();
+
+    let service = ServiceBuilder::new()
         // .layer(ConcurrencyLimitLayer::new(100))
         .layer(TraceLayer::new_for_http())
         .layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,
             Duration::from_secs(20),
-        ))
+        ));
+
+    service
         .service(UpstreamService::new(domains, client))
         .map_response(|resp| resp.map(|body| body.boxed()))
         .boxed_clone()

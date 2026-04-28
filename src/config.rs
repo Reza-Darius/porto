@@ -1,30 +1,35 @@
-use std::{net::SocketAddr, path::PathBuf};
+use std::{
+    net::SocketAddr,
+    path::{Path, PathBuf},
+};
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use clap::Parser;
 use serde::Deserialize;
 use tap::Pipe;
-use tracing::{debug, info};
+use tracing::{debug, instrument};
 
 use crate::utils::{Domain, PeerAddr};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
-pub struct Cli {
+pub struct Args {
     /// Addr and port for Porto to listen on
     #[arg(short, long)]
     addr: Option<SocketAddr>,
 
-    /// Sets a custom config file
+    /// Sets path to a porto.toml config file
     #[arg(short, long, value_name = "FILE")]
     config: Option<PathBuf>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct PortoConfig {
-    bind: SocketAddr,
-    tls: bool,
-    acme: bool,
+    pub bind: SocketAddr,
+    pub tls: bool,
+    pub auto_cert: bool,
+    pub cert_path: Option<PathBuf>,
+    pub key_path: Option<PathBuf>,
     proxy: Vec<Proxy>,
 }
 
@@ -38,47 +43,92 @@ impl PortoConfig {
     pub fn get_proxies(&self) -> impl Iterator<Item = (&Domain, &PeerAddr)> {
         self.proxy.iter().map(|p| (&p.domain, &p.upstream))
     }
+
+    pub fn get_addr(&self) -> SocketAddr {
+        self.bind
+    }
 }
 
 const CONFIG_FILENAME: &str = "porto.toml";
 
-fn setup_config_with_args(args: Cli) -> Result<PortoConfig> {
-    let config_path = args.config.unwrap_or_else(|| PathBuf::from("."));
+#[instrument(err)]
+pub fn setup_config() -> Result<PortoConfig> {
+    let args = Args::parse();
+    let path = args
+        .config
+        .unwrap_or_else(|| PathBuf::from(CONFIG_FILENAME));
 
-    debug!("loading config from {}", config_path.display());
+    let mut config = parse_config_file(path)?;
 
-    let mut config: PortoConfig = config_path
-        .join(CONFIG_FILENAME)
-        .pipe(std::fs::read)?
-        .pipe_as_ref(toml::from_slice)?;
-
+    // command line argument overwrites config
     if let Some(addr) = args.addr {
         config.bind = addr;
     }
-
     Ok(config)
 }
 
-pub fn setup_config() -> Result<PortoConfig> {
-    let args = Cli::parse();
-    setup_config_with_args(args)
+fn parse_config_file(path: impl AsRef<Path>) -> Result<PortoConfig> {
+    debug!("loading config from {}", path.as_ref().display());
+
+    let mut config: PortoConfig = path
+        .as_ref()
+        .pipe(std::fs::read)?
+        .pipe_as_ref(toml::from_slice)?;
+
+    if config.tls && (config.cert_path.is_none() || config.key_path.is_none()) {
+        return Err(anyhow!("TLS set to true, but no cert or key path provided"));
+    }
+
+    // we cant have acme enabled and tls disabled, set both to disabled
+    if config.auto_cert && !config.tls {
+        config.auto_cert = false;
+    }
+
+    if config.proxy.is_empty() {
+        return Err(anyhow!("no proxy paths provided"));
+    }
+
+    Ok(config)
 }
 
 #[cfg(test)]
 mod config_tests {
     use super::*;
 
+    fn setup_test_conf(path: &Path) {
+        let config = r#"
+            bind = "127.0.0.1:3000"
+            tls = true
+            auto_cert = false
+
+            cert_path = "credentials/example_cert.pem"
+            key_path = "credentials/example_key.pem"
+
+            [[proxy]]
+            domain = "darius.dev"
+            upstream = "10.0.0.0:67"
+
+            [[proxy]]
+            domain = "RezaDarius.de"
+            upstream = "/tmp/darius_art.sock"
+
+            "#;
+        std::fs::write(path, config.as_bytes()).unwrap();
+    }
+
     #[test]
     fn config_test() {
-        let args = Cli {
-            addr: None,
-            config: None,
-        };
+        let path = Path::new("testporto.toml");
+        let _ = std::fs::remove_file(path);
+        setup_test_conf(path);
 
-        let config = setup_config_with_args(args).unwrap();
+        let config = parse_config_file("testporto.toml").unwrap();
+
         assert!(config.tls);
-        assert!(!config.acme);
+        assert!(!config.auto_cert);
         assert_eq!(config.proxy.len(), 2);
         println!("{:?}", config);
+
+        let _ = std::fs::remove_file(path);
     }
 }
