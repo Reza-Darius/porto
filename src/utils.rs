@@ -4,7 +4,9 @@ use std::fmt::Display;
 use std::net::Ipv4Addr;
 use std::net::SocketAddr as IpSockAddr;
 use std::os::unix::net::SocketAddr;
+use std::path::PathBuf;
 use std::pin::Pin;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use addr::parse_domain_name;
@@ -22,6 +24,8 @@ use tokio::net::unix::UCred;
 use tower::util::BoxCloneService;
 use tracing::debug;
 use tracing::trace;
+
+use crate::config::PortoConfig;
 
 pub type BoxFut<R, E> = Pin<Box<dyn Future<Output = std::result::Result<R, E>> + Send>>;
 pub type Body = BoxBody<Bytes, hyper::Error>;
@@ -176,12 +180,19 @@ pub struct UpstreamMap {
     inner: Arc<UpstreamMapInner>,
 }
 
+#[derive(Debug)]
+struct UpstreamMapInner {
+    map: HashMap<Domain, PeerAddr>,
+}
+
 impl UpstreamMap {
-    pub fn new(domains: &[(Domain, PeerAddr)]) -> Self {
+    pub fn new(config: &PortoConfig) -> Self {
+        let map = config
+            .get_proxies()
+            .map(|(d, a)| (d.clone(), a.clone()))
+            .collect();
         UpstreamMap {
-            inner: Arc::new(UpstreamMapInner {
-                map: domains.iter().cloned().collect(),
-            }),
+            inner: Arc::new(UpstreamMapInner { map }),
         }
     }
 
@@ -203,7 +214,7 @@ impl<const N: usize> TryFrom<&[(&str, &str); N]> for UpstreamMap {
             .map(|(domain, addr)| {
                 Ok::<_, anyhow::Error>((
                     Domain::parse(domain)?,
-                    PeerAddr::Uds(SocketAddr::from_pathname(addr)?),
+                    PeerAddr::Uds(PathBuf::from_str(addr)?),
                 ))
             })
             .collect::<Result<_, _>>()?;
@@ -223,18 +234,14 @@ impl Display for UpstreamMap {
     }
 }
 
-#[derive(Debug)]
-struct UpstreamMapInner {
-    map: HashMap<Domain, PeerAddr>,
-}
-
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
 pub enum PeerAddr {
-    Ipv4(Ipv4Addr),
-    Uds(SocketAddr),
+    Ipv4(std::net::SocketAddr),
+    Uds(PathBuf), // must be second so serde evaluates in the right order
 }
 
-#[derive(Debug, Clone, Display, Hash, Eq, PartialEq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Display, Hash, Eq, PartialEq, PartialOrd, Ord, Deserialize)]
 pub struct Domain(Arc<str>);
 
 impl Domain {

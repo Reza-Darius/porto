@@ -16,6 +16,10 @@ use tracing::{debug, error, instrument, warn};
 
 use crate::utils::*;
 
+/*
+ * this upstream service uses a custom connection pool
+ */
+
 const MAX_POOL_SIZE: usize = 100;
 
 pub fn setup_client(domains: &[(&'static str, &str)]) -> UpstreamClient {

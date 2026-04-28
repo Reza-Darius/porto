@@ -6,7 +6,7 @@ use anyhow::{Result, anyhow};
 use derive_more::Display;
 use http_body_util::BodyExt;
 use hyper::{
-    Request, Response, StatusCode,
+    Request, Response,
     body::{Bytes, Incoming},
     header::HOST,
 };

@@ -12,6 +12,10 @@ use tracing::{debug, error, warn};
 
 use crate::utils::*;
 
+/*
+ * this upstream service uses hyper's client to talk to peers
+ */
+
 pub fn setup_client() -> Client<UnixConnector, Incoming> {
     Client::builder(hyper_util::rt::TokioExecutor::new())
         .pool_idle_timeout(std::time::Duration::from_secs(30))
@@ -69,9 +73,7 @@ impl Service<Request<Incoming>> for UpstreamService {
 
             let sock_path = match peer_addr {
                 PeerAddr::Ipv4(_) => unimplemented!("IP upstream is not supported yet"),
-                PeerAddr::Uds(socket_addr) => socket_addr
-                    .as_pathname()
-                    .expect("unnamed sockets arent supported"),
+                PeerAddr::Uds(socket_addr) => socket_addr,
             };
 
             adjust_header(&mut req);

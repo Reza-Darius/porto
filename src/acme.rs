@@ -6,7 +6,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use bincode::config::Configuration;
 use hyper::{Request, Response, StatusCode, body::Incoming};
 use instant_acme::{
@@ -38,7 +38,7 @@ const CERT_FILENAME: &str = "cert.pem";
 const KEY_FILENAME: &str = "key.pem";
 
 /// Create the ACME order based on the given domain names.
-#[instrument(err, skip_all)]
+#[instrument(err, skip_all, fields(domains = ?domains))]
 async fn issue_order(store: PortoTLS, account: &Account, domains: &[Domain]) -> Result<()> {
     let domains: Vec<_> = domains.to_vec();
     let identifier: Vec<_> = domains
@@ -46,7 +46,7 @@ async fn issue_order(store: PortoTLS, account: &Account, domains: &[Domain]) -> 
         .map(|s| Identifier::Dns(s.to_string()))
         .collect();
 
-    info!(?domains, "issuing new ACME order");
+    info!("issuing new ACME order");
 
     let mut order = account.new_order(&NewOrder::new(&identifier)).await?;
 
@@ -318,18 +318,17 @@ impl PortoTLS {
 }
 
 fn load_pem_file(path: impl AsRef<Path>) -> Result<Pem> {
-    let pem = path
-        .as_ref()
+    path.as_ref()
         .pipe(|path| {
             if path.exists() {
                 Ok(path)
             } else {
-                Err(anyhow!("couldnt find cert.pem"))
+                Err(anyhow!("couldnt find {}", path.display()))
             }
         })?
         .pipe(std::fs::read)?
-        .pipe_as_ref(|file| parse_x509_pem(file).map(|(_, pem)| pem))?;
-    Ok(pem)
+        .pipe_as_ref(|file| parse_x509_pem(file).map(|(_, pem)| pem))
+        .map_err(|e| anyhow!("{e}"))
 }
 
 #[instrument(err)]
@@ -515,7 +514,6 @@ mod tests {
     use hyper::server::conn::http1::Builder;
     use hyper_util::rt::TokioIo;
     use hyper_util::service::TowerToHyperService;
-    use std::os::unix::net::SocketAddr as UdsSocketAddr;
     use tokio::io::AsyncWriteExt;
     use tracing_subscriber::EnvFilter;
 
@@ -533,16 +531,10 @@ mod tests {
         let addr = "0.0.0.0:5002"; // port for pebble ACME server
         let cred_path = "credentials/";
 
-        let domains = UpstreamMap::new(&[
-            // (
-            //     Domain::parse("darius.dev").unwrap(),
-            //     PeerAddr::Uds(UdsSocketAddr::from_pathname("/tmp/darius_dev.sock").unwrap()),
-            // ),
-            (
-                Domain::parse("RezaDarius.de").unwrap(),
-                PeerAddr::Uds(UdsSocketAddr::from_pathname("/tmp/darius_art.sock").unwrap()),
-            ),
-        ]);
+        let domains = UpstreamMap::try_from(&[
+            // ("darius.dev", "/tmp/darius_dev.sock"),
+            ("RezaDarius.de", "/tmp/darius_art.sock"),
+        ])?;
 
         let listener = tokio::net::TcpListener::bind(addr).await?;
         let tls = PortoTLS::init(cred_path, domains).unwrap();
