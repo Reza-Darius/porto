@@ -49,7 +49,7 @@ impl UpstreamClient {
     #[instrument(err)]
     pub async fn request(&self, req: Request<Incoming>) -> Result<Response<Body>> {
         // get host name
-        let peer = if let Ok(host) = get_host(&req) {
+        let peer = if let Ok(host) = get_target_host(&req) {
             host
         } else {
             warn!("no host header found on request");

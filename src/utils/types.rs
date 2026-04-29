@@ -1,7 +1,6 @@
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::fmt::Display;
-use std::net::SocketAddr as IpSockAddr;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::str::FromStr;
@@ -10,165 +9,19 @@ use std::sync::Arc;
 use addr::parse_domain_name;
 use anyhow::{Result, anyhow};
 use derive_more::{AsRef, Display, Eq, From};
-use http_body_util::{BodyExt, Full};
-use http_body_util::{Empty, combinators::BoxBody};
+use http_body_util::combinators::BoxBody;
 use hyper::body::{Bytes, Incoming};
-use hyper::header::HOST;
-use hyper::header::HeaderValue;
-use hyper::{HeaderMap, Request, Response, StatusCode, Version};
+use hyper::{Request, Response};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;
-use tokio::net::unix::UCred;
 use tower::util::BoxCloneService;
 use tracing::debug;
-use tracing::trace;
 
 use crate::config::PortoConfig;
 
 pub type BoxFut<R, E> = Pin<Box<dyn Future<Output = std::result::Result<R, E>> + Send>>;
 pub type Body = BoxBody<Bytes, hyper::Error>;
 pub type HyperService = BoxCloneService<Request<Incoming>, Response<Body>, hyper::Error>;
-
-// We create some utility functions to make Empty and Full bodies
-// fit our broadened Response body type.
-pub fn empty() -> Body {
-    Empty::<Bytes>::new()
-        .map_err(|never| match never {})
-        .boxed()
-}
-
-pub fn full<T: Into<Bytes>>(chunk: T) -> Body {
-    Full::new(chunk.into())
-        .map_err(|never| match never {})
-        .boxed()
-}
-
-#[derive(Clone, Debug)]
-#[allow(dead_code)]
-struct UdsConnectInfo {
-    peer_addr: Arc<tokio::net::unix::SocketAddr>,
-    peer_cred: UCred,
-}
-
-pub fn setup_tracing() {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .with_target(false)
-        .init();
-}
-
-pub async fn shutdown_signal() {
-    // Wait for the CTRL+C signal
-    tokio::signal::ctrl_c()
-        .await
-        .expect("failed to install CTRL+C signal handler");
-}
-
-pub fn response(status: StatusCode) -> Response<Body> {
-    Response::builder().status(status).body(empty()).unwrap()
-}
-
-pub fn bad_request() -> Response<Body> {
-    Response::builder()
-        .status(StatusCode::BAD_REQUEST)
-        .body(empty())
-        .unwrap()
-}
-
-pub fn not_found() -> Response<Body> {
-    Response::builder()
-        .status(StatusCode::NOT_FOUND)
-        .body(empty())
-        .unwrap()
-}
-
-pub fn internal_error() -> Response<Body> {
-    Response::builder()
-        .status(StatusCode::INTERNAL_SERVER_ERROR)
-        .body(empty())
-        .unwrap()
-}
-
-pub fn get_host<B>(req: &Request<B>) -> Result<&str> {
-    let header = req.headers();
-    // which dumbass wrote this?
-    match req.version() {
-        Version::HTTP_2 => {
-            if let Some(host) = header.get(HOST) {
-                let host = host
-                    .to_str()
-                    .ok()
-                    .map(|str| {
-                        if str.contains(':') {
-                            str.split(':').next().unwrap()
-                        } else {
-                            str
-                        }
-                    })
-                    .unwrap();
-                debug!("host header {host}");
-                return Ok(host);
-            };
-
-            let host = if let Some(host) = req.uri().authority().map(|au| au.as_str()) {
-                host
-            } else {
-                return Err(anyhow!(
-                    "no authority or host header found on http2 request"
-                ));
-            };
-            debug!("found host: {host}");
-            Ok(host)
-        }
-        _ => {
-            let host = if let Some(host) = header.get(HOST) {
-                host.to_str()
-                    .ok()
-                    .map(|str| {
-                        if str.contains(':') {
-                            str.split(':').next().unwrap()
-                        } else {
-                            str
-                        }
-                    })
-                    .unwrap()
-            } else {
-                return Err(anyhow!("no host field on http1 request"));
-            };
-
-            debug!("found host: {host}");
-            Ok(host)
-        }
-    }
-}
-
-pub fn adjust_header<B>(req: &mut Request<B>) {
-    strip_header(req.headers_mut());
-
-    if let Some(client_addr) = req.extensions().get::<IpSockAddr>().cloned() {
-        debug!("adjusting header with {client_addr}");
-
-        if let Ok(addr) = HeaderValue::from_str(&client_addr.to_string()) {
-            req.headers_mut().insert("X-Forwarded-For", addr);
-        } else {
-            tracing::error!("couldnt create header value from sock addr");
-        };
-    };
-}
-
-pub fn strip_header(headers: &mut HeaderMap) {
-    use hyper::header;
-    trace!("stripping header");
-
-    headers.remove(header::CONNECTION);
-    headers.remove(header::TRANSFER_ENCODING);
-    headers.remove(header::TE);
-    headers.remove(header::TRAILER);
-    headers.remove(header::UPGRADE);
-    headers.remove("keep-alive");
-    headers.remove("proxy-authenticate");
-    headers.remove("proxy-authorization");
-}
 
 pub async fn is_tls(stream: &TcpStream) -> bool {
     let mut peek_buf = [0u8; 1];
@@ -183,6 +36,16 @@ pub async fn is_tls(stream: &TcpStream) -> bool {
 #[derive(Debug, Clone)]
 pub struct UpstreamMap {
     inner: Arc<UpstreamMapInner>,
+}
+
+impl UpstreamMap {
+    pub fn get_peer_addr_from_req<B>(&self, req: &Request<B>) -> Option<PeerAddr> {
+        let host = super::get_target_host(req).ok()?;
+        self.get_peer_addr(host).cloned().or_else(|| {
+            debug!(requested_host = %host, "coulndnt retrieve socket name");
+            None
+        })
+    }
 }
 
 #[derive(Debug)]
@@ -246,6 +109,26 @@ pub enum PeerAddr {
     Uds(PathBuf), // must be second so serde evaluates in the right order
 }
 
+impl TryFrom<&str> for PeerAddr {
+    type Error = anyhow::Error;
+
+    fn try_from(value: &str) -> std::result::Result<Self, Self::Error> {
+        value
+            .parse::<std::net::SocketAddr>()
+            .map(PeerAddr::Ipv4)
+            .or_else(|_| Ok(PeerAddr::Uds(PathBuf::from_str(value)?)))
+    }
+}
+
+impl Display for PeerAddr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PeerAddr::Ipv4(socket_addr) => write!(f, "{}", socket_addr),
+            PeerAddr::Uds(path_buf) => write!(f, "{}", path_buf.display()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Display, Hash, Eq, PartialEq, PartialOrd, Ord, Deserialize)]
 pub struct Domain(Arc<str>);
 
@@ -265,6 +148,12 @@ impl Domain {
     }
 
     pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl AsRef<str> for Domain {
+    fn as_ref(&self) -> &str {
         &self.0
     }
 }

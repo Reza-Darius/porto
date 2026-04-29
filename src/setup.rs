@@ -10,6 +10,7 @@ use tokio_rustls::TlsAcceptor;
 
 use crate::config::PortoConfig;
 
+#[tracing::instrument(err, skip_all)]
 pub fn setup_tls_from_file(config: &PortoConfig) -> Result<TlsAcceptor> {
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     let certs = config.cert_path.as_ref().unwrap();
@@ -39,7 +40,7 @@ pub fn setup_tls_from_file(config: &PortoConfig) -> Result<TlsAcceptor> {
 }
 
 pub fn setup_listener(config: &PortoConfig) -> TcpListener {
-    let addr = config.bind;
+    let addr = config.get_addr();
     let socket = TcpSocket::new_v4().unwrap();
 
     socket.set_keepalive(true).unwrap();

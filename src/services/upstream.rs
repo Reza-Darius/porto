@@ -1,8 +1,13 @@
-use anyhow::Result;
+use std::future::{Ready, ready};
+use std::net::SocketAddr;
+
+use anyhow::{Result, anyhow};
 use http_body_util::BodyExt;
+use hyper::StatusCode;
 use hyper::body::Incoming;
-use hyper::{Request, Response};
-use hyper::{StatusCode, Version};
+use hyper::{Request, Response, Uri};
+use hyper_util::client::legacy::connect::HttpConnector;
+use hyper_util::client::legacy::connect::dns::Name;
 use hyper_util::client::legacy::{Client, ResponseFuture};
 use hyper_util::rt::TokioTimer;
 use hyperlocal::UnixConnector;
@@ -10,7 +15,7 @@ use hyperlocal::Uri as UdsUri;
 use pin_project_lite::pin_project;
 use tokio::time::Instant;
 use tower::Service;
-use tracing::{debug, error, warn};
+use tracing::{debug, error};
 
 use crate::utils::*;
 
@@ -18,7 +23,7 @@ use crate::utils::*;
  * this upstream service uses hyper's client to talk to peers
  */
 
-pub fn setup_client() -> Client<UnixConnector, Incoming> {
+pub fn setup_uds_client() -> Client<UnixConnector, Incoming> {
     Client::builder(hyper_util::rt::TokioExecutor::new())
         .pool_idle_timeout(std::time::Duration::from_secs(30))
         .pool_timer(TokioTimer::new())
@@ -26,18 +31,31 @@ pub fn setup_client() -> Client<UnixConnector, Incoming> {
         .build(UnixConnector)
 }
 
+pub fn setup_tcp_client(domains: UpstreamMap) -> Client<HttpConnector<UpstreamResolver>, Incoming> {
+    let resolver = UpstreamResolver { peers: domains };
+    let connector = HttpConnector::new_with_resolver(resolver);
+
+    Client::builder(hyper_util::rt::TokioExecutor::new())
+        .pool_idle_timeout(std::time::Duration::from_secs(30))
+        .pool_timer(TokioTimer::new())
+        .pool_max_idle_per_host(32) // Tune based on your backend
+        .build(connector)
+}
+
 #[derive(Debug, Clone)]
 pub struct UpstreamService {
-    upstream_client: Client<UnixConnector, Incoming>,
-    domains: UpstreamMap,
+    uds_client: Client<UnixConnector, Incoming>,
+    tcp_client: Client<HttpConnector<UpstreamResolver>, Incoming>,
+    table: UpstreamMap,
 }
 
 impl UpstreamService {
-    pub fn new(domains: UpstreamMap, client: Client<UnixConnector, Incoming>) -> Self {
+    pub fn new(domains: UpstreamMap) -> Self {
         debug!("new upstream service");
         Self {
-            domains,
-            upstream_client: client,
+            table: domains.clone(),
+            uds_client: setup_uds_client(),
+            tcp_client: setup_tcp_client(domains),
         }
     }
 }
@@ -55,61 +73,67 @@ impl Service<Request<Incoming>> for UpstreamService {
     }
 
     fn call(&mut self, mut req: Request<Incoming>) -> Self::Future {
-        let domain_handle = self.domains.clone();
-        let client = self.upstream_client.clone();
+        let table = self.table.clone();
+        let tcp_client = self.uds_client.clone();
+        let tcp_client = self.tcp_client.clone();
 
         Box::pin(async move {
             // get host name
-            let req_host = if let Ok(host) = get_host(&req) {
-                host
-            } else {
+            let Ok(req_host) = get_target_host(&req) else {
                 debug!("no host header found on request");
                 return Ok(response(StatusCode::BAD_REQUEST));
             };
 
             // get associated socket name
-            let Some(peer_addr) = domain_handle.get_peer_addr(req_host) else {
+            let Some(peer_addr) = table.get_peer_addr(req_host) else {
                 debug!(requested_host = %req_host, "coulndnt retrieve socket name");
                 return Ok(response(StatusCode::NOT_FOUND));
             };
 
-            let sock_path = match peer_addr {
-                PeerAddr::Ipv4(_) => {
-                    error!("ipv4 upstream are not supported yet");
-                    return Ok(response(StatusCode::INTERNAL_SERVER_ERROR));
+            match peer_addr {
+                PeerAddr::Ipv4(addr) => {
+                    let mut parts = req.uri().clone().into_parts();
+                    parts.scheme = Some("http".parse().unwrap());
+                    parts.authority = parts
+                        .authority
+                        .map(|auth| strip_port(auth.as_str()).parse().unwrap());
+                    let upstream_uri = Uri::from_parts(parts).unwrap();
+
+                    let req = rewrite_request(req, upstream_uri);
+
+                    let t = Instant::now();
+                    match tcp_client.request(req).await {
+                        Ok(resp) => {
+                            debug!(
+                                elapsed_ms = t.elapsed().as_millis(),
+                                "forwarded message time"
+                            );
+                            Ok(resp.map(|b| b.boxed()))
+                        }
+                        Err(e) => {
+                            error!(?e, "couldnt send request");
+                            Ok(response(StatusCode::INTERNAL_SERVER_ERROR))
+                        }
+                    }
                 }
-                PeerAddr::Uds(socket_addr) => socket_addr,
-            };
+                PeerAddr::Uds(socket_addr) => {
+                    let upstream_uri = UdsUri::new(socket_addr, req.uri().path()).into();
+                    let req = rewrite_request(req, upstream_uri);
 
-            adjust_header(&mut req);
-
-            if req.version() == Version::HTTP_2 {
-                let (mut parts, body) = req.into_parts();
-
-                parts.version = hyper::Version::HTTP_11;
-                parts.uri = UdsUri::new(sock_path, parts.uri.path()).into();
-                parts
-                    .headers
-                    .entry("host")
-                    .or_insert("localhost".parse().unwrap());
-
-                req = Request::from_parts(parts, body);
-            } else {
-                *req.uri_mut() = UdsUri::new(sock_path, req.uri().path()).into();
-            }
-
-            let t = Instant::now();
-            match client.request(req).await {
-                Ok(resp) => {
-                    debug!(
-                        elapsed_ms = t.elapsed().as_millis(),
-                        "forwarded message time"
-                    );
-                    Ok(resp.map(|b| b.boxed()))
-                }
-                Err(e) => {
-                    error!(?e, "couldnt send request");
-                    Ok(response(StatusCode::INTERNAL_SERVER_ERROR))
+                    let t = Instant::now();
+                    match tcp_client.request(req).await {
+                        Ok(resp) => {
+                            debug!(
+                                elapsed_ms = t.elapsed().as_millis(),
+                                "forwarded message time"
+                            );
+                            Ok(resp.map(|b| b.boxed()))
+                        }
+                        Err(e) => {
+                            error!(?e, "couldnt send request");
+                            Ok(response(StatusCode::INTERNAL_SERVER_ERROR))
+                        }
+                    }
                 }
             }
         })
@@ -148,5 +172,47 @@ impl Future for UpstreamFuture {
             },
             std::task::Poll::Pending => std::task::Poll::Pending,
         }
+    }
+}
+
+#[derive(Clone)]
+pub struct UpstreamResolver {
+    peers: UpstreamMap,
+}
+
+impl UpstreamResolver {
+    fn new(domains: UpstreamMap) -> Self {
+        UpstreamResolver { peers: domains }
+    }
+}
+
+impl Service<Name> for UpstreamResolver {
+    type Response = std::iter::Once<SocketAddr>;
+    type Error = anyhow::Error;
+    type Future = Ready<Result<Self::Response, Self::Error>>;
+
+    fn poll_ready(
+        &mut self,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::result::Result<(), Self::Error>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, req: Name) -> Self::Future {
+        let Some(addr) = self.peers.get_peer_addr(req.as_str()) else {
+            error!(name = req.as_str(), "couldnt find addr");
+            return ready(Err(anyhow!("couldnt find addr")));
+        };
+        let resp = match addr {
+            PeerAddr::Ipv4(socket_addr) => {
+                debug!(req = req.as_str(), %socket_addr, "resolved address");
+                Ok(std::iter::once(*socket_addr))
+            }
+            PeerAddr::Uds(uds_addrs) => {
+                error!(addr = %uds_addrs.display(), "UDS address found in resolver");
+                Err(anyhow!("found UDS address"))
+            }
+        };
+        ready(resp)
     }
 }

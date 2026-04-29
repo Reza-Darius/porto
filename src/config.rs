@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use serde::Deserialize;
 use tap::Pipe;
@@ -15,7 +15,6 @@ use crate::utils::{Domain, PeerAddr};
 #[command(version, about, long_about = None)]
 pub struct Args {
     /// Addr and port for Porto to listen on
-    #[arg(short, long)]
     addr: Option<SocketAddr>,
 
     /// Sets path to a porto.toml config file
@@ -25,8 +24,10 @@ pub struct Args {
 
 #[derive(Debug, Deserialize)]
 pub struct PortoConfig {
-    pub bind: SocketAddr,
+    pub bind: Option<SocketAddr>,
+    #[serde(default = "default_tls")]
     pub tls: bool,
+    #[serde(default)]
     pub auto_cert: bool,
     pub cert_path: Option<PathBuf>,
     pub key_path: Option<PathBuf>,
@@ -45,11 +46,15 @@ impl PortoConfig {
     }
 
     pub fn get_addr(&self) -> SocketAddr {
-        self.bind
+        self.bind.expect("config parsing fails without an address")
     }
 }
 
 const CONFIG_FILENAME: &str = "porto.toml";
+
+const fn default_tls() -> bool {
+    true
+}
 
 #[instrument(err)]
 pub fn setup_config() -> Result<PortoConfig> {
@@ -60,23 +65,31 @@ pub fn setup_config() -> Result<PortoConfig> {
 
     let mut config = parse_config_file(path)?;
 
-    // command line argument overwrites config
     if let Some(addr) = args.addr {
-        config.bind = addr;
+        // command line argument overwrites config
+        config.bind = Some(addr);
+    } else if config.bind.is_none() {
+        return Err(anyhow!(
+            "No listening address provided! Either pass a address as argument or set \"bind = [ADDR]\" inside the config"
+        ));
     }
+
     Ok(config)
 }
 
 fn parse_config_file(path: impl AsRef<Path>) -> Result<PortoConfig> {
-    debug!("loading config from {}", path.as_ref().display());
+    debug!("loading config from \"{}\"", path.as_ref().display());
 
     let mut config: PortoConfig = path
         .as_ref()
-        .pipe(std::fs::read)?
+        .pipe(std::fs::read)
+        .with_context(|| anyhow!("path: {}", path.as_ref().display()))?
         .pipe_as_ref(toml::from_slice)?;
 
     if config.tls && (config.cert_path.is_none() || config.key_path.is_none()) {
-        return Err(anyhow!("TLS set to true, but no cert or key path provided"));
+        return Err(anyhow!(
+            "TLS set to true, but no cert or key path provided. If you wish to not use TLS pass \"tls = false\" inside the config"
+        ));
     }
 
     // we cant have acme enabled and tls disabled, set both to disabled
@@ -85,7 +98,9 @@ fn parse_config_file(path: impl AsRef<Path>) -> Result<PortoConfig> {
     }
 
     if config.proxy.is_empty() {
-        return Err(anyhow!("no proxy paths provided"));
+        return Err(anyhow!(
+            "No upstream paths provided! Configure at least one Proxy"
+        ));
     }
 
     Ok(config)

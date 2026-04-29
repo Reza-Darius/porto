@@ -7,7 +7,6 @@ use hyper::{Request, StatusCode};
 use hyper_util::rt::TokioExecutor;
 use hyper_util::server::conn::auto::Builder;
 use hyper_util::{rt::TokioIo, service::TowerToHyperService};
-use proxy::config::{PortoConfig, setup_config};
 use tap::Pipe;
 use tikv_jemallocator::Jemalloc;
 use tokio::select;
@@ -16,9 +15,10 @@ use tower::{ServiceBuilder, ServiceExt};
 use tower_http::{timeout::TimeoutLayer, trace::TraceLayer};
 use tracing::{debug, error, info};
 
-use proxy::services::upstream::*;
-use proxy::setup::*;
-use proxy::utils::*;
+use porto::config::*;
+use porto::services::upstream::*;
+use porto::setup::*;
+use porto::utils::*;
 
 #[global_allocator]
 static GLOBAL: Jemalloc = Jemalloc;
@@ -28,7 +28,6 @@ async fn main() -> Result<()> {
     setup_tracing();
 
     let config = setup_config()?;
-
     let listener = setup_listener(&config);
     let tls_acceptor = setup_tls_from_file(&config)?;
     let service = setup_service(&config);
@@ -36,7 +35,7 @@ async fn main() -> Result<()> {
     let graceful = hyper_util::server::graceful::GracefulShutdown::new();
     let mut signal = std::pin::pin!(shutdown_signal());
 
-    info!("listening on {}", config.bind);
+    info!("listening on {}", config.get_addr());
 
     loop {
         let tls_acceptor = tls_acceptor.clone();
@@ -102,7 +101,7 @@ async fn main() -> Result<()> {
 
 fn setup_service(config: &PortoConfig) -> HyperService {
     let domains = UpstreamMap::new(config);
-    let client = setup_client();
+    info!("initialized domains {domains}");
 
     let service = ServiceBuilder::new()
         // .layer(ConcurrencyLimitLayer::new(100))
@@ -113,7 +112,7 @@ fn setup_service(config: &PortoConfig) -> HyperService {
         ));
 
     service
-        .service(UpstreamService::new(domains, client))
+        .service(UpstreamService::new(domains))
         .map_response(|resp| resp.map(|body| body.boxed()))
         .boxed_clone()
 }

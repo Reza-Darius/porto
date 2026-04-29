@@ -1,5 +1,5 @@
 [package]
-name = "proxy"
+name = "porto"
 version = "0.1.0"
 edition = "2024"
 default-run = "server"
@@ -16,7 +16,7 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
 http-body-util = "0.1"
 hyper = { version = "1.0.0", features = ["full"] }
-hyper-util = { version = "0.1", features = ["client", "full"] }
+hyper-util = { version = "0.1", features = ["client", "full", "tokio"] }
 thiserror = "2.0.18"
 anyhow = "1.0.102"
 hyper-rustls = "0.27.7"
@@ -50,8 +50,8 @@ name = "server2"
 path = "src/bin/server2.rs"
 
 [[bin]]
-name = "client"
-path = "src/bin/client.rs"
+name = "peer"
+path = "src/bin/test_peer.rs"
 
 [profile.release]
 debug = true              # Include debug symbols

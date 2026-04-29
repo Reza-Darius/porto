@@ -1,0 +1,55 @@
+use anyhow::Result;
+use http_body_util::BodyExt;
+use hyper::service::service_fn;
+use hyper::{Request, Response, body::Incoming, server::conn::http1};
+use hyper_util::rt::TokioIo;
+use porto::utils::{Body, PeerAddr, setup_tracing};
+use tokio::net::{TcpListener, UnixListener};
+use tracing::info;
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    setup_tracing();
+    let args: Vec<String> = std::env::args().collect();
+    let addr = PeerAddr::try_from(args[1].as_str())?;
+
+    match addr {
+        PeerAddr::Ipv4(sock_addr) => {
+            let listener = TcpListener::bind(sock_addr).await?;
+            info!("listening on TCP {}", sock_addr);
+
+            while let Ok((stream, _)) = listener.accept().await {
+                tokio::task::spawn(async move {
+                    if let Err(err) = http1::Builder::new()
+                        .serve_connection(TokioIo::new(stream), service_fn(echo))
+                        .await
+                    {
+                        println!("Error serving connection: {:?}", err);
+                    }
+                });
+            }
+        }
+        PeerAddr::Uds(sock_path) => {
+            let listener = UnixListener::bind(sock_path.clone())?;
+            info!("listening on UDS {}", sock_path.display());
+
+            while let Ok((stream, _)) = listener.accept().await {
+                tokio::task::spawn(async move {
+                    if let Err(err) = http1::Builder::new()
+                        .serve_connection(TokioIo::new(stream), service_fn(echo))
+                        .await
+                    {
+                        println!("Error serving connection: {:?}", err);
+                    }
+                });
+            }
+        }
+    };
+
+    Ok(())
+}
+
+async fn echo(req: Request<Incoming>) -> Result<Response<Body>, hyper::Error> {
+    info!("received request: {req:?}");
+    Ok(Response::new(req.into_body().boxed()))
+}
