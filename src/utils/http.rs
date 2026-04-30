@@ -1,5 +1,6 @@
 use std::net::SocketAddr as IpSockAddr;
 use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::{Result, anyhow};
 use http_body_util::Empty;
@@ -82,7 +83,7 @@ pub fn get_target_host<B>(req: &Request<B>) -> Result<&str> {
             .uri()
             .authority()
             .map(|au| au.host())
-            .inspect(|host| debug!("found host: {host}"))
+            .inspect(|host| debug!("found host in request: {host}"))
             .ok_or_else(|| anyhow!("no authority or host header found on http2 request")),
         _ => {
             // this works only for origin form
@@ -93,7 +94,7 @@ pub fn get_target_host<B>(req: &Request<B>) -> Result<&str> {
                 .to_str()?
                 .pipe(strip_port);
 
-            debug!("found host: {host}");
+            debug!("found host in request: {host}");
             Ok(host)
         }
     }
@@ -133,6 +134,7 @@ pub fn strip_header(headers: &mut HeaderMap) {
 }
 
 pub fn rewrite_request<B>(mut req: Request<B>, upstream_uri: Uri) -> Request<B> {
+    let t = Instant::now();
     adjust_header(&mut req);
 
     let (mut parts, body) = req.into_parts();
@@ -153,6 +155,12 @@ pub fn rewrite_request<B>(mut req: Request<B>, upstream_uri: Uri) -> Request<B> 
         hyper::header::HOST,
         hyper::header::HeaderValue::from_str(host).unwrap(),
     );
-    debug!(?parts, "rewritten to response");
+
+    debug!(
+        elapsed = t.elapsed().as_millis(),
+        ?parts,
+        "rewritten to response"
+    );
+
     Request::from_parts(parts, body)
 }

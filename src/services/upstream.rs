@@ -27,18 +27,18 @@ pub fn setup_uds_client() -> Client<UnixConnector, Incoming> {
     Client::builder(hyper_util::rt::TokioExecutor::new())
         .pool_idle_timeout(std::time::Duration::from_secs(30))
         .pool_timer(TokioTimer::new())
-        .pool_max_idle_per_host(32) // Tune based on your backend
+        .pool_max_idle_per_host(100) // Tune based on your backend
         .build(UnixConnector)
 }
 
 pub fn setup_tcp_client(domains: UpstreamMap) -> Client<HttpConnector<UpstreamResolver>, Incoming> {
-    let resolver = UpstreamResolver { peers: domains };
-    let connector = HttpConnector::new_with_resolver(resolver);
+    let mut connector = HttpConnector::new_with_resolver(UpstreamResolver::new(domains));
+    connector.set_nodelay(true);
 
     Client::builder(hyper_util::rt::TokioExecutor::new())
         .pool_idle_timeout(std::time::Duration::from_secs(30))
         .pool_timer(TokioTimer::new())
-        .pool_max_idle_per_host(32) // Tune based on your backend
+        .pool_max_idle_per_host(100) // Tune based on your backend
         .build(connector)
 }
 
@@ -62,7 +62,7 @@ impl UpstreamService {
 
 impl Service<Request<Incoming>> for UpstreamService {
     type Response = Response<Body>;
-    type Error = hyper::Error;
+    type Error = anyhow::Error;
     type Future = BoxFut<Self::Response, Self::Error>;
 
     fn poll_ready(
@@ -112,10 +112,13 @@ impl Service<Request<Incoming>> for UpstreamService {
                 }
                 PeerAddr::Ipv4(_) => {
                     let mut parts = req.uri().clone().into_parts();
+                    debug!(?parts, "request parts");
                     parts.scheme = Some("http".parse().expect("its hardcoded"));
                     parts.authority = parts
                         .authority
-                        .map(|auth| strip_port(auth.as_str()).parse().unwrap());
+                        .map(|auth| strip_port(auth.as_str()).parse().unwrap())
+                        .or_else(|| Some(req_host.parse().unwrap()));
+
                     let upstream_uri = Uri::from_parts(parts).unwrap();
 
                     let req = rewrite_request(req, upstream_uri);

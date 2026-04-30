@@ -4,6 +4,7 @@ use std::{
     future::Ready,
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
 
 use anyhow::{Result, anyhow};
@@ -34,8 +35,8 @@ const RENEWAL_THRESHOLD_DAYS: i64 = 30;
 const RENEWAL_THRESHHOLD: i64 = 60 * 60 * 24 * RENEWAL_THRESHOLD_DAYS;
 const CHECK_INTERVAL_HOURS: u64 = 24;
 
-const CERT_FILENAME: &str = "cert.pem";
-const KEY_FILENAME: &str = "key.pem";
+const CERT_FILENAME: &str = "acme_cert.pem";
+const KEY_FILENAME: &str = "acme_key.pem";
 
 /// Create the ACME order based on the given domain names.
 #[instrument(err, skip_all, fields(domains = ?domains))]
@@ -137,7 +138,7 @@ pub struct AcmeChallengeService {
 
 impl AcmeChallengeService {
     fn init(store: PortoTLS) -> Self {
-        tokio::spawn(acme_worker(store.clone()));
+        tokio::spawn(acme_worker(store.clone(), AcmeWorkerMode::Debug));
         AcmeChallengeService { store }
     }
 }
@@ -393,40 +394,50 @@ async fn get_acme_acc(cred_path: impl AsRef<Path>) -> Result<Account> {
     Ok(account)
 }
 
-async fn acme_worker(store: PortoTLS) {
-    let account = acme_test_acc().await.unwrap();
+enum AcmeWorkerMode {
+    Debug,
+    Prod,
+}
 
-    match store.load_certs_from_file() {
-        Ok(_) => info!("loaded certs from file"),
-        Err(e) => warn!(%e, "couldnt load certs from file"),
-    };
+async fn acme_worker(store: PortoTLS, mode: AcmeWorkerMode) {
+    match mode {
+        AcmeWorkerMode::Debug => {
+            let account = acme_test_acc().await.unwrap();
 
-    if let Some(domains) = store.check_new_domains() {
-        let _ = issue_order(store.clone(), &account, &domains)
-            .await
-            .inspect_err(|e| error!(%e, "ACME error"));
-    };
+            match store.load_certs_from_file() {
+                Ok(_) => info!("loaded certs from file"),
+                Err(e) => warn!(%e, "couldnt load certs from file"),
+            };
 
-    // let account = get_acme_acc(&store.inner.cred_path).await.unwrap();
-    // let mut timer = tokio::time::interval(Duration::from_hours(CHECK_INTERVAL_HOURS));
+            if let Some(domains) = store.check_new_domains() {
+                let _ = issue_order(store.clone(), &account, &domains)
+                    .await
+                    .inspect_err(|e| error!(%e, "ACME error"));
+            };
+        }
+        AcmeWorkerMode::Prod => {
+            let account = get_acme_acc(&store.inner.cred_path).await.unwrap();
+            let mut timer = tokio::time::interval(Duration::from_hours(CHECK_INTERVAL_HOURS));
 
-    // loop {
-    //     timer.tick().await;
+            loop {
+                timer.tick().await;
 
-    //     // TODO: some sort watcher channel for newly added domains when the server is running
+                // TODO: some sort watcher channel for newly added domains when the server is running
 
-    //     if let Some(domains) = store.check_new_domains() {
-    //         let _ = issue_order(store.clone(), &account, &domains)
-    //             .await
-    //             .inspect_err(|e| error!(%e, "ACME error"));
-    //     }
+                if let Some(domains) = store.check_new_domains() {
+                    let _ = issue_order(store.clone(), &account, &domains)
+                        .await
+                        .inspect_err(|e| error!(%e, "ACME error"));
+                }
 
-    //     if let Some(domains) = store.check_certs() {
-    //         let _ = issue_order(store.clone(), &account, &domains)
-    //             .await
-    //             .inspect_err(|e| error!(%e, "ACME error"));
-    //     }
-    // }
+                if let Some(domains) = store.check_certs() {
+                    let _ = issue_order(store.clone(), &account, &domains)
+                        .await
+                        .inspect_err(|e| error!(%e, "ACME error"));
+                }
+            }
+        }
+    }
 }
 
 fn should_renew(cert_pem: &CertChainPem) -> bool {
@@ -503,7 +514,7 @@ impl Resolver {
 impl server::ResolvesServerCert for Resolver {
     fn resolve(&self, client_hello: ClientHello<'_>) -> Option<Arc<sign::CertifiedKey>> {
         if let Some(name) = client_hello.server_name() {
-            debug!("resolving {name}");
+            debug!("resolving cert for {name}");
             self.inner.lock().get(name).cloned()
         } else {
             // This kind of resolver requires SNI
@@ -522,9 +533,15 @@ mod tests {
     use tracing_subscriber::EnvFilter;
 
     use super::*;
-
     #[tokio::test]
     async fn acme_test() -> Result<()> {
+        /*
+        HOW TO TEST:
+
+        - start acme server: docker compose up
+        - curl with: curl --http1.1 --resolve acmetest.com:5002:127.0.0.1 https://acmetest.com:5002 -k -v
+
+        */
         tracing_subscriber::fmt()
             .with_env_filter(
                 EnvFilter::try_from_default_env()
@@ -533,14 +550,11 @@ mod tests {
             .init();
 
         let mut config = PortoConfig::default();
-        config.cert_path = Some(PathBuf::from("credentials"));
+        config.credentials = Some(PathBuf::from("credentials"));
 
         let addr = "0.0.0.0:5002"; // port for pebble ACME server
 
-        let domains = UpstreamMap::try_from(&[
-            // ("darius.dev", "/tmp/darius_dev.sock"),
-            ("RezaDarius.de", "/tmp/darius_art.sock"),
-        ])?;
+        let domains = UpstreamMap::try_from(&[("acmetest.com", "1.1.1.1:6767")])?;
 
         let listener = tokio::net::TcpListener::bind(addr).await?;
         let tls = PortoTLS::init(&config, domains).unwrap();

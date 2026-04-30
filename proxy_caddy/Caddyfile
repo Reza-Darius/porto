@@ -1,5 +1,8 @@
-RezaDarius.de:3000 {
+{
+    auto_https off
+}
+testpeer.com:4000 {
 	bind 127.0.0.1
-	tls credentials/example_cert.pem credentials/example_key.pem
-	reverse_proxy unix//tmp/darius_art.sock
+	tls ../credentials/testpeer.com.pem ../credentials/testpeer.com-key.pem
+	reverse_proxy 127.0.0.2:8000
 }

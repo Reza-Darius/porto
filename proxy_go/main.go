@@ -22,9 +22,9 @@ func main() {
 		Level: logLevelFromEnv(),
 	})))
 
-	addr := "127.0.0.1:3000"
-	domain := "RezaDarius.de"
-	target := "/tmp/darius_art.sock"
+	addr := "127.0.0.1:4000"
+	domain := "testpeer.com"
+	target := "127.0.0.2:8000"
 
 	proxy := ProxyService{
 		domains: map[string]string{
@@ -40,8 +40,8 @@ func main() {
 
 	log.Fatal(http.ListenAndServeTLS(
 		addr,
-		"example_cert.pem",
-		"example_key.pem",
+		"../credentials/testpeer.com.pem",
+		"../credentials/testpeer.com-k.pem",
 		mux,
 	))
 }
@@ -65,7 +65,7 @@ func (p *ProxyService) ProxyHandle(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	backend := p.DialBackend(host)
+	client := p.DialBackend(host)
 
 	uri := r.RequestURI
 	slog.Debug("request URI:", "uri", uri)
@@ -76,7 +76,7 @@ func (p *ProxyService) ProxyHandle(w http.ResponseWriter, r *http.Request) {
 
 	stripHeaders(backendReq.Header)
 
-	resp, err := backend.Do(backendReq)
+	resp, err := client.Do(backendReq)
 	if err != nil {
 		slog.Debug("error when sending to backend:", "err", err)
 		w.WriteHeader(http.StatusInternalServerError)

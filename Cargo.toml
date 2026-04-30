@@ -47,10 +47,6 @@ name = "server"
 path = "src/bin/server.rs"
 
 [[bin]]
-name = "server2"
-path = "src/bin/server2.rs"
-
-[[bin]]
 name = "peer"
 path = "src/bin/test_peer.rs"
 

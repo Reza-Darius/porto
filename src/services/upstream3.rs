@@ -1,3 +1,4 @@
+use std::error::Error;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::Instant;
@@ -6,12 +7,14 @@ use anyhow::anyhow;
 use http_body_util::BodyExt;
 use hyper::body::Incoming;
 use hyper::client::conn::http1::SendRequest;
-use hyper::{Request, Response};
+use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::{TokioExecutor, TokioIo};
+use parking_lot::Mutex;
 use tokio::net::{TcpStream, UnixStream};
 use tokio::sync::mpsc::Sender;
 use tokio::sync::oneshot::{Receiver, channel};
 use tokio::time::Duration;
+use tower::util::BoxCloneService;
 use tower::{Service, ServiceBuilder, ServiceExt};
 use tracing::{debug, error};
 
@@ -21,110 +24,165 @@ use crate::utils::*;
 
 // TODO: add some configuration, maybe a bulider
 
-pub fn setup_upstream_service(domains: UpstreamMap) -> UpstreamService {
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<Envelope>(1024);
+pub fn setup_upstream_service(domains: UpstreamMap) -> impl Service<Request<Incoming>> {
+    let layer = ServiceBuilder::new()
+        // limit the amount of in-flight handshakes
+        // .concurrency_limit(100)
+        .service(ConnectorService::new());
+
+    let cache = hyper_util::client::pool::cache::builder()
+        .executor(TokioExecutor::new())
+        .build(layer);
+
+    let svc = UpstreamService {
+        peers: domains,
+        pool: Arc::new(Mutex::new(cache)),
+    };
+    let worker_clone = svc.pool.clone();
 
     tokio::spawn(async move {
-        let layer = ServiceBuilder::new()
-            // limit the amount of in-flight handshakes
-            .concurrency_limit(100)
-            .service(ConnectorService::new());
-
-        let mut cache = hyper_util::client::pool::cache::builder()
-            .executor(TokioExecutor::new())
-            .build(layer);
+        let cache = worker_clone;
 
         let mut timeout_check = tokio::time::interval(Duration::from_secs(30));
         let idle_dur = Duration::from_secs(20);
+
         loop {
-            tokio::select! {
-                _ = timeout_check.tick() => {
-                    debug!("checking for timed out sender...");
-
-                    let now = Instant::now();
-                    cache.retain(|sender| {
-                        if sender.sender.is_closed() {
-                            return false;
-                        }
-                        now < sender.last_used + idle_dur
-                    });
+            timeout_check.tick().await;
+            let now = Instant::now();
+            cache.lock().retain(|sender| {
+                if sender.sender.is_closed() {
+                    return false;
                 }
-                Some(msg) = rx.recv() => {
-                    // get socket address
-                    let Some(peer_addr) = domains.get_peer_addr_from_req(&msg.req) else {
-                        let _ = msg.talk_back.send(bad_request());
-                        continue
-                    };
-
-
-                    // get sender from the cache service
-                    let mut sender = match cache.ready().await.unwrap().call(peer_addr).await {
-                        Ok(sender) => sender,
-                        Err(e) => {
-                         error!(%e, "error when calling cache service");
-                         continue
-                        }
-                    };
-
-                    match sender.ready().await.unwrap().call(msg.req).await {
-                        Ok(resp) => {
-                            let _ = msg.talk_back.send(resp).inspect_err(|_| error!("failed to send through one-shot channel"));
-                        }
-                        Err(e) => {
-                         error!(%e, "error when sending request to upstream sender");
-                         continue
-                        }
-                    };
-                }
-            }
+                now < sender.last_used + idle_dur
+            });
         }
     });
-    UpstreamService { handle: tx }
-}
-
-struct Envelope {
-    req: Request<Incoming>,
-    talk_back: tokio::sync::oneshot::Sender<Response<Body>>,
-}
-
-impl Envelope {
-    fn new(req: Request<Incoming>) -> (Self, Receiver<Response<Body>>) {
-        let (tx, rx) = channel();
-        (Envelope { req, talk_back: tx }, rx)
-    }
+    svc
 }
 
 #[derive(Clone)]
-pub struct UpstreamService {
-    handle: Sender<Envelope>,
+pub struct UpstreamService<S> {
+    pub peers: UpstreamMap,
+    pub pool: Arc<Mutex<S>>,
 }
 
-impl Service<Request<Incoming>> for UpstreamService {
+impl<S, M> Service<Request<Incoming>> for UpstreamService<S>
+where
+    S: Service<PeerAddr, Response = M> + Send + 'static,
+    S::Future: Send + 'static,
+    S::Error: Into<anyhow::Error> + Send + 'static,
+    M: Service<Request<Incoming>, Response = Response<Body>> + Send + 'static,
+    M::Future: Send + 'static,
+    M::Error: Into<anyhow::Error> + Send + 'static,
+{
     type Response = Response<Body>;
     type Error = anyhow::Error;
     type Future = BoxFut<Self::Response, Self::Error>;
 
     fn poll_ready(
         &mut self,
-        _: &mut std::task::Context<'_>,
+        cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::result::Result<(), Self::Error>> {
-        if self.handle.is_closed() {
-            std::task::Poll::Ready(Err(anyhow!("channel is closed")))
-        } else {
-            std::task::Poll::Ready(Ok(()))
-        }
+        self.pool.lock().poll_ready(cx).map_err(Into::into)
     }
 
     fn call(&mut self, req: Request<Incoming>) -> Self::Future {
-        let (env, rx) = Envelope::new(req);
-        let handle = self.handle.clone();
+        let pool = self.pool.clone();
+        let table = self.peers.clone();
 
         Box::pin(async move {
-            handle.send(env).await?;
-            rx.await.or_else(|e| {
-                error!(%e, "error when awating one shot receiver");
-                Ok(internal_error())
-            })
+            // get host name
+            let Ok(req_host) = get_target_host(&req) else {
+                debug!("no host header found on request");
+                return Ok(response(StatusCode::BAD_REQUEST));
+            };
+
+            // get associated socket name
+            let Some(peer_addr) = table.get_peer_addr(req_host).cloned() else {
+                debug!(requested_host = %req_host, "coulndnt retrieve socket name");
+                return Ok(response(StatusCode::NOT_FOUND));
+            };
+
+            let req = match &peer_addr {
+                PeerAddr::Uds(socket_addr) => {
+                    let upstream_uri = hyperlocal::Uri::new(socket_addr, req.uri().path()).into();
+                    rewrite_request(req, upstream_uri)
+                }
+                PeerAddr::Ipv4(_) => {
+                    let mut parts = req.uri().clone().into_parts();
+                    debug!(?parts, "request parts");
+                    parts.scheme = Some("http".parse().expect("its hardcoded"));
+                    parts.authority = parts
+                        .authority
+                        .map(|auth| strip_port(auth.as_str()).parse().unwrap())
+                        .or_else(|| Some(req_host.parse().unwrap()));
+
+                    let upstream_uri = hyper::Uri::from_parts(parts).unwrap();
+
+                    rewrite_request(req, upstream_uri)
+                }
+            };
+            let fut = pool.lock().call(peer_addr);
+
+            let Ok(mut sender) = fut.await.map_err(Into::into) else {
+                error!("couldnt get sender");
+                return Ok(response(StatusCode::INTERNAL_SERVER_ERROR));
+            };
+
+            sender.call(req).await.map_err(Into::into)
+        })
+    }
+}
+
+// pub struct AddrService<S> {
+//     peers: UpstreamMap,
+//     inner: S,
+// }
+
+// impl<S> Service<Request<Incoming>> for AddrService<S>
+// where
+//     S: Service<PeerAddr>,
+// {
+//     type Response = Response<B>;
+//     type Error;
+//     type Future;
+
+//     fn poll_ready(
+//         &mut self,
+//         cx: &mut std::task::Context<'_>,
+//     ) -> std::task::Poll<Result<(), Self::Error>> {
+//         todo!()
+//     }
+
+//     fn call(&mut self, req: Request<Incoming>) -> Self::Future {
+//         todo!()
+//     }
+// }
+
+pub struct UpstreamSender {
+    pub last_used: Instant,
+    pub sender: SendRequest<Incoming>,
+}
+
+impl Service<Request<Incoming>> for UpstreamSender {
+    type Response = Response<Body>;
+    type Error = anyhow::Error;
+    type Future = BoxFut<Self::Response, Self::Error>;
+
+    fn poll_ready(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::result::Result<(), Self::Error>> {
+        self.sender.poll_ready(cx).map_err(Into::into)
+    }
+
+    fn call(&mut self, req: Request<Incoming>) -> Self::Future {
+        self.last_used = Instant::now();
+        let f = self.sender.send_request(req);
+        Box::pin(async move {
+            let resp = f.await?;
+
+            Ok(resp.map(|b| b.boxed()))
         })
     }
 }
@@ -209,34 +267,6 @@ impl Service<PeerAddr> for ConnectorService {
                 last_used: Instant::now(),
                 sender,
             })
-        })
-    }
-}
-
-pub struct UpstreamSender {
-    last_used: Instant,
-    sender: SendRequest<Incoming>,
-}
-
-impl Service<Request<Incoming>> for UpstreamSender {
-    type Response = Response<Body>;
-    type Error = anyhow::Error;
-    type Future = BoxFut<Self::Response, Self::Error>;
-
-    fn poll_ready(
-        &mut self,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::result::Result<(), Self::Error>> {
-        self.sender.poll_ready(cx).map_err(Into::into)
-    }
-
-    fn call(&mut self, req: Request<Incoming>) -> Self::Future {
-        self.last_used = Instant::now();
-        let f = self.sender.send_request(req);
-        Box::pin(async move {
-            let resp = f.await?;
-
-            Ok(resp.map(|b| b.boxed()))
         })
     }
 }

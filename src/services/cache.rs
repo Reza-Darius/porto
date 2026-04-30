@@ -141,30 +141,27 @@ pub struct ResponseCache<S, C> {
 
 impl<S, C> Service<Request<Incoming>> for ResponseCache<S, C>
 where
-    S: Service<
-            Request<Incoming>,
-            Response = Response<Body>,
-            Error = hyper::Error,
-            Future = BoxFut<Response<Body>, hyper::Error>,
-        > + Send
-        + 'static,
+    S: Service<Request<Incoming>, Response = Response<Body>> + Send + 'static,
+    S::Error: Into<anyhow::Error>,
+    S::Future: Send + 'static,
     C: CacheStore + Send + 'static,
 {
     type Response = Response<Body>;
-    type Error = hyper::Error;
+    type Error = anyhow::Error;
     type Future = BoxFut<Self::Response, Self::Error>;
 
     fn poll_ready(
         &mut self,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Result<(), Self::Error>> {
-        self.inner.poll_ready(cx)
+        self.inner.poll_ready(cx).map_err(Into::into)
     }
 
     fn call(&mut self, req: Request<Incoming>) -> Self::Future {
         let Ok(key) = CacheKey::from_req(&req) else {
             error!("couldnt create key from request for cache");
-            return self.inner.call(req);
+            let f = self.inner.call(req);
+            return Box::pin(async { f.await.map_err(Into::into) });
         };
 
         if let Some(resp) = self.cache.get(&key) {

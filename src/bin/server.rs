@@ -3,15 +3,17 @@ use std::time::Duration;
 
 use anyhow::Result;
 use http_body_util::BodyExt;
-use hyper::{Request, StatusCode};
+use hyper::body::Incoming;
+use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioExecutor;
 use hyper_util::server::conn::auto::Builder;
 use hyper_util::{rt::TokioIo, service::TowerToHyperService};
+use std::time::Instant;
 use tap::Pipe;
 use tikv_jemallocator::Jemalloc;
 use tokio::select;
-use tokio::time::Instant;
-use tower::{ServiceBuilder, ServiceExt};
+use tower::util::BoxCloneService;
+use tower::{Service, ServiceBuilder, ServiceExt};
 use tower_http::{timeout::TimeoutLayer, trace::TraceLayer};
 use tracing::{debug, error, info};
 
@@ -111,8 +113,59 @@ fn setup_service(config: &PortoConfig) -> HyperService {
         ));
 
     service
-        // .service(UpstreamService::new(domains))
-        .service(porto::services::upstream3::setup_upstream_service(domains))
+        .service(UpstreamService::new(domains))
         .map_response(|resp| resp.map(|body| body.boxed()))
         .boxed_clone()
 }
+
+// fn setup_service2(config: &PortoConfig) -> HyperService {
+//     use parking_lot::Mutex;
+//     use porto::services::upstream3::*;
+//     use std::sync::Arc;
+
+//     let domains = UpstreamMap::new(config);
+//     info!("initialized domains {domains}");
+
+//     let middleware = ServiceBuilder::new()
+//         .layer(TraceLayer::new_for_http())
+//         .layer(TimeoutLayer::with_status_code(
+//             StatusCode::REQUEST_TIMEOUT,
+//             Duration::from_secs(20),
+//         ));
+
+//     let connector = ServiceBuilder::new()
+//         // limit the amount of in-flight handshakes
+//         .concurrency_limit(100)
+//         .service(ConnectorService::new());
+
+//     let cache = hyper_util::client::pool::cache::builder()
+//         .executor(TokioExecutor::new())
+//         .build(connector);
+
+//     let upstream = UpstreamService {
+//         peers: domains,
+//         pool: Arc::new(Mutex::new(cache)),
+//     };
+//     let worker_clone = upstream.pool.clone();
+
+//     tokio::spawn(async move {
+//         let cache = worker_clone;
+
+//         let mut timeout_check = tokio::time::interval(Duration::from_secs(30));
+//         let idle_dur = Duration::from_secs(20);
+
+//         loop {
+//             timeout_check.tick().await;
+//             let now = Instant::now();
+//             cache.lock().retain(|sender| {
+//                 if sender.sender.is_closed() {
+//                     return false;
+//                 }
+//                 now < sender.last_used + idle_dur
+//             });
+//         }
+//     });
+//     let svc = middleware.service(upstream);
+//     svc.map_response(|resp| resp.map(|body| body.boxed()))
+//         .boxed_clone()
+// }
