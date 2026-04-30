@@ -29,7 +29,9 @@ git clone https://github.com/Reza-Darius/porto
 cargo build
 ```
 
-by default, porto looks for a `porto.toml` file, which looks like this
+By default, porto looks for a `porto.toml` in the current working directory. An alternate location can be provided by passing `--config "path/porto.toml"`
+
+## Config
 
 ```toml
 # address for porto to listen on
