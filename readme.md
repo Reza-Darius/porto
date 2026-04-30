@@ -19,3 +19,39 @@ a simple but fast reverse proxy with TLS termination
 - Response Caching
 - Rate Limiting
 - Health checks
+
+## Hello World
+
+build it with cargo
+
+```
+git clone https://github.com/Reza-Darius/porto
+cargo build
+```
+
+by default, porto looks for a `porto.toml` file, which looks like this
+
+```toml
+# address for porto to listen on
+bind = "127.0.0.1:3000"
+
+# TLS is enabled by default
+tls = true
+
+# enables ACME
+auto_cert = false
+
+# if TLS is enabled, you need to provide paths for certificates
+cert_path = "credentials/testpeer.com.pem"
+key_path = "credentials/testpeer.com-key.pem"
+
+# provide any number of addresses to proxy to
+
+[[proxy]]
+domain = "RustIsAwsome.com"
+upstream = "127.0.0.10:4000"
+
+[[proxy]]
+domain = "GolangIsCoolToo.com"
+upstream = "/tmp/website.sock"
+```

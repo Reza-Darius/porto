@@ -317,6 +317,7 @@ impl PortoTLS {
         let key = key.parse_x509()?;
 
         debug!(issuer = %cert.issuer(), "found certificate");
+        todo!();
         Ok(())
     }
 }

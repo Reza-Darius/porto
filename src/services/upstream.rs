@@ -1,6 +1,7 @@
 use std::future::{Ready, ready};
 use std::net::SocketAddr;
 
+use addr::domain;
 use anyhow::{Result, anyhow};
 use http_body_util::BodyExt;
 use hyper::StatusCode;
@@ -13,6 +14,7 @@ use hyper_util::rt::TokioTimer;
 use hyperlocal::UnixConnector;
 use hyperlocal::Uri as UdsUri;
 use pin_project_lite::pin_project;
+use tokio::net::{TcpStream, UnixStream};
 use tokio::time::Instant;
 use tower::Service;
 use tracing::{debug, error};
@@ -114,6 +116,8 @@ impl Service<Request<Incoming>> for UpstreamService {
                     let mut parts = req.uri().clone().into_parts();
                     debug!(?parts, "request parts");
                     parts.scheme = Some("http".parse().expect("its hardcoded"));
+
+                    // we either trim the URI to not include a port, or use the HOST field
                     parts.authority = parts
                         .authority
                         .map(|auth| strip_port(auth.as_str()).parse().unwrap())
@@ -219,3 +223,53 @@ impl Service<Name> for UpstreamResolver {
         ready(resp)
     }
 }
+
+// #[derive(Clone)]
+// pub struct UpstreamConnector {
+//     peers: UpstreamMap,
+// }
+
+// impl UpstreamConnector {
+//     pub fn new(peers: UpstreamMap) -> Self {
+//         UpstreamConnector { peers }
+//     }
+// }
+
+// impl Service<Uri> for UpstreamConnector {
+//     type Response = PeerStream;
+
+//     type Error = anyhow::Error;
+
+//     type Future = BoxFut<Self::Response, Self::Error>;
+
+//     fn poll_ready(
+//         &mut self,
+//         _: &mut std::task::Context<'_>,
+//     ) -> std::task::Poll<std::result::Result<(), Self::Error>> {
+//         todo!()
+//     }
+
+//     fn call(&mut self, req: Uri) -> Self::Future {
+//         let table = self.peers.clone();
+
+//         Box::pin(async move {
+//             // get host name
+//             let Ok(req_host) = get_target_host(&req) else {
+//                 debug!("no host header found on request");
+//                 return Err(anyhow!("no host header found on request"));
+//             };
+
+//             // get associated socket name
+//             let Some(peer_addr) = table.get_peer_addr(req_host) else {
+//                 debug!(requested_host = %req_host, "coulndnt retrieve socket name");
+//                 return Err(anyhow!("coulndnt retrieve socket name"));
+//             };
+//             todo!()
+//         })
+//     }
+// }
+
+// enum PeerStream {
+//     Tcp(TcpStream),
+//     Uds(UnixStream),
+// }
