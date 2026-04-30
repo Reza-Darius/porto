@@ -21,7 +21,7 @@ use crate::config::PortoConfig;
 
 pub type BoxFut<R, E> = Pin<Box<dyn Future<Output = std::result::Result<R, E>> + Send>>;
 pub type Body = BoxBody<Bytes, hyper::Error>;
-pub type HyperService = BoxCloneService<Request<Incoming>, Response<Body>, hyper::Error>;
+pub type HyperService = BoxCloneService<Request<Incoming>, Response<Body>, anyhow::Error>;
 
 pub async fn is_tls(stream: &TcpStream) -> bool {
     let mut peek_buf = [0u8; 1];
@@ -138,13 +138,7 @@ impl Domain {
             .map_err(|e| anyhow!("{e}"))?
             .root()
             .ok_or_else(|| anyhow!("couldnt extract root from domain name"))
-            .map(|dm| Domain(Arc::from(dm)))
-
-        // Url::parse(url.as_ref())?
-        //     .host_str()
-        //     .ok_or_else(|| anyhow!("couldnt extract host identifier from {}", url.as_ref()))
-        //     .map(Arc::from)
-        //     .map(Domain)
+            .map(|domain| Domain(Arc::from(domain)))
     }
 
     pub fn as_str(&self) -> &str {

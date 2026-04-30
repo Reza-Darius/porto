@@ -25,9 +25,6 @@ pub fn setup_tls_from_file(config: &PortoConfig) -> Result<TlsAcceptor> {
     let key = PrivateKeyDer::from_pem_file(key)
         .with_context(|| anyhow!("could not read key file: {}", key.display()))?;
 
-    // TODO
-    // let mut resolver = ResolvesServerCertUsingSni::new();
-
     // Build TLS configuration.
     let mut server_config = ServerConfig::builder()
         .with_no_client_auth()

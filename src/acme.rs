@@ -6,7 +6,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Result, anyhow};
 use bincode::config::Configuration;
 use hyper::{Request, Response, StatusCode, body::Incoming};
 use instant_acme::{
@@ -28,7 +28,7 @@ use tower::Service;
 use tracing::{debug, error, info, instrument, warn};
 use x509_parser::pem::{Pem, parse_x509_pem};
 
-use crate::utils::*;
+use crate::{config::PortoConfig, utils::*};
 
 const RENEWAL_THRESHOLD_DAYS: i64 = 30;
 const RENEWAL_THRESHHOLD: i64 = 60 * 60 * 24 * RENEWAL_THRESHOLD_DAYS;
@@ -144,7 +144,7 @@ impl AcmeChallengeService {
 
 impl Service<Request<Incoming>> for AcmeChallengeService {
     type Response = Response<Body>;
-    type Error = hyper::Error;
+    type Error = anyhow::Error;
 
     type Future = Ready<Result<Self::Response, Self::Error>>;
 
@@ -199,8 +199,11 @@ struct PortoTLSInner {
 }
 
 impl PortoTLS {
-    pub fn init(cred_path: impl Into<PathBuf>, peers: UpstreamMap) -> Result<Self> {
-        let path = cred_path.into();
+    pub fn init(config: &PortoConfig, peers: UpstreamMap) -> Result<Self> {
+        let path = config
+            .credentials
+            .clone()
+            .ok_or_else(|| anyhow!("no credentials path provided"))?;
 
         debug!("initializing TLS Service");
         debug!(path = %path.display());
@@ -450,7 +453,7 @@ fn is_expired(cert_pem: &CertChainPem) -> bool {
 
 /// Something that resolves do different cert chains/keys based
 /// on client-supplied server name (via SNI).
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Resolver {
     inner: Mutex<HashMap<String, Arc<sign::CertifiedKey>>>,
 }
@@ -511,6 +514,7 @@ impl server::ResolvesServerCert for Resolver {
 
 #[cfg(test)]
 mod tests {
+
     use hyper::server::conn::http1::Builder;
     use hyper_util::rt::TokioIo;
     use hyper_util::service::TowerToHyperService;
@@ -528,8 +532,10 @@ mod tests {
             )
             .init();
 
+        let mut config = PortoConfig::default();
+        config.cert_path = Some(PathBuf::from("credentials"));
+
         let addr = "0.0.0.0:5002"; // port for pebble ACME server
-        let cred_path = "credentials/";
 
         let domains = UpstreamMap::try_from(&[
             // ("darius.dev", "/tmp/darius_dev.sock"),
@@ -537,7 +543,7 @@ mod tests {
         ])?;
 
         let listener = tokio::net::TcpListener::bind(addr).await?;
-        let tls = PortoTLS::init(cred_path, domains).unwrap();
+        let tls = PortoTLS::init(&config, domains).unwrap();
         let service = TowerToHyperService::new(AcmeChallengeService::init(tls.clone()));
 
         info!("test ACME server listening on {addr}");

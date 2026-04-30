@@ -5,7 +5,8 @@ a simple but fast reverse proxy with TLS termination
 ## Features
 
 - Async with Tokio
-- HTTP upstreaming with hyper
+- HTTP upstreaming with hyper 
+- dynamic support for UDS and TCP sockets
 - Tower for middleware
 - Deadpool for connection pooling
 - HTTPS support with rustls

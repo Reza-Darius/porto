@@ -72,9 +72,9 @@ impl Service<Request<Incoming>> for UpstreamService {
         std::task::Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, mut req: Request<Incoming>) -> Self::Future {
+    fn call(&mut self, req: Request<Incoming>) -> Self::Future {
         let table = self.table.clone();
-        let tcp_client = self.uds_client.clone();
+        let uds_client = self.uds_client.clone();
         let tcp_client = self.tcp_client.clone();
 
         Box::pin(async move {
@@ -91,18 +91,12 @@ impl Service<Request<Incoming>> for UpstreamService {
             };
 
             match peer_addr {
-                PeerAddr::Ipv4(addr) => {
-                    let mut parts = req.uri().clone().into_parts();
-                    parts.scheme = Some("http".parse().unwrap());
-                    parts.authority = parts
-                        .authority
-                        .map(|auth| strip_port(auth.as_str()).parse().unwrap());
-                    let upstream_uri = Uri::from_parts(parts).unwrap();
-
+                PeerAddr::Uds(socket_addr) => {
+                    let upstream_uri = UdsUri::new(socket_addr, req.uri().path()).into();
                     let req = rewrite_request(req, upstream_uri);
 
                     let t = Instant::now();
-                    match tcp_client.request(req).await {
+                    match uds_client.request(req).await {
                         Ok(resp) => {
                             debug!(
                                 elapsed_ms = t.elapsed().as_millis(),
@@ -116,8 +110,14 @@ impl Service<Request<Incoming>> for UpstreamService {
                         }
                     }
                 }
-                PeerAddr::Uds(socket_addr) => {
-                    let upstream_uri = UdsUri::new(socket_addr, req.uri().path()).into();
+                PeerAddr::Ipv4(_) => {
+                    let mut parts = req.uri().clone().into_parts();
+                    parts.scheme = Some("http".parse().expect("its hardcoded"));
+                    parts.authority = parts
+                        .authority
+                        .map(|auth| strip_port(auth.as_str()).parse().unwrap());
+                    let upstream_uri = Uri::from_parts(parts).unwrap();
+
                     let req = rewrite_request(req, upstream_uri);
 
                     let t = Instant::now();

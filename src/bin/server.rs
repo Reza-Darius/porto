@@ -75,7 +75,7 @@ async fn main() -> Result<()> {
                                 error!("got MyError: {:?}", e);
                             }
                         } else {
-                            error!(e, "error when serving connection");
+                            error!("error when serving connection {e:#}");
                         }
                     };
                 });
@@ -104,7 +104,6 @@ fn setup_service(config: &PortoConfig) -> HyperService {
     info!("initialized domains {domains}");
 
     let service = ServiceBuilder::new()
-        // .layer(ConcurrencyLimitLayer::new(100))
         .layer(TraceLayer::new_for_http())
         .layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,
@@ -112,7 +111,8 @@ fn setup_service(config: &PortoConfig) -> HyperService {
         ));
 
     service
-        .service(UpstreamService::new(domains))
+        // .service(UpstreamService::new(domains))
+        .service(porto::services::upstream3::setup_upstream_service(domains))
         .map_response(|resp| resp.map(|body| body.boxed()))
         .boxed_clone()
 }

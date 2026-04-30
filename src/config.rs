@@ -22,15 +22,18 @@ pub struct Args {
     config: Option<PathBuf>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 pub struct PortoConfig {
     pub bind: Option<SocketAddr>,
     #[serde(default = "default_tls")]
     pub tls: bool,
     #[serde(default)]
     pub auto_cert: bool,
+    // for simple TLS
     pub cert_path: Option<PathBuf>,
     pub key_path: Option<PathBuf>,
+    // for ACME
+    pub credentials: Option<PathBuf>,
     proxy: Vec<Proxy>,
 }
 
