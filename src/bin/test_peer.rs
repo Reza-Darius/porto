@@ -1,9 +1,11 @@
+use std::ops::Deref;
+
 use anyhow::Result;
 use http_body_util::BodyExt;
 use hyper::service::service_fn;
 use hyper::{Request, Response, body::Incoming, server::conn::http1};
 use hyper_util::rt::TokioIo;
-use porto::utils::{Body, PeerAddr, setup_tracing};
+use porto::utils::{Body, PeerAddr, PeerAddrInner, setup_tracing};
 use tokio::net::{TcpListener, UnixListener};
 use tracing::info;
 
@@ -13,8 +15,8 @@ async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let addr = PeerAddr::try_from(args[1].as_str())?;
 
-    match addr {
-        PeerAddr::Ipv4(sock_addr) => {
+    match addr.deref() {
+        PeerAddrInner::Ipv4(sock_addr) => {
             let listener = TcpListener::bind(sock_addr).await?;
             info!("listening on TCP {}", sock_addr);
 
@@ -29,7 +31,7 @@ async fn main() -> Result<()> {
                 });
             }
         }
-        PeerAddr::Uds(sock_path) => {
+        PeerAddrInner::Uds(sock_path) => {
             let listener = UnixListener::bind(sock_path.clone())?;
             info!("listening on UDS {}", sock_path.display());
 

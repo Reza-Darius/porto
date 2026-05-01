@@ -92,8 +92,8 @@ impl Service<Request<Incoming>> for UpstreamService {
                 return Ok(response(StatusCode::NOT_FOUND));
             };
 
-            match peer_addr {
-                PeerAddr::Uds(socket_addr) => {
+            match &*peer_addr {
+                PeerAddrInner::Uds(socket_addr) => {
                     let upstream_uri = UdsUri::new(socket_addr, req.uri().path()).into();
                     let req = rewrite_request(req, upstream_uri);
 
@@ -112,7 +112,7 @@ impl Service<Request<Incoming>> for UpstreamService {
                         }
                     }
                 }
-                PeerAddr::Ipv4(_) => {
+                PeerAddrInner::Ipv4(_) => {
                     let mut parts = req.uri().clone().into_parts();
                     debug!(?parts, "request parts");
                     parts.scheme = Some("http".parse().expect("its hardcoded"));
@@ -210,12 +210,12 @@ impl Service<Name> for UpstreamResolver {
             error!(name = req.as_str(), "couldnt find addr");
             return ready(Err(anyhow!("couldnt find addr")));
         };
-        let resp = match addr {
-            PeerAddr::Ipv4(socket_addr) => {
+        let resp = match &*addr {
+            PeerAddrInner::Ipv4(socket_addr) => {
                 debug!(req = req.as_str(), %socket_addr, "resolved address");
                 Ok(std::iter::once(*socket_addr))
             }
-            PeerAddr::Uds(uds_addrs) => {
+            PeerAddrInner::Uds(uds_addrs) => {
                 error!(addr = %uds_addrs.display(), "UDS address found in resolver");
                 Err(anyhow!("found UDS address"))
             }

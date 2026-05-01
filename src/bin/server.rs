@@ -102,7 +102,7 @@ async fn main() -> Result<()> {
 }
 
 fn setup_service(config: &PortoConfig) -> HyperService {
-    let table = PeerTable::new(config);
+    let table = PeerTable::init(config);
     info!("initialized domains {table}");
 
     let service = ServiceBuilder::new()
@@ -119,9 +119,9 @@ fn setup_service(config: &PortoConfig) -> HyperService {
 }
 
 fn setup_service2(config: &PortoConfig) -> HyperService {
-    use porto::services::upstream3::*;
+    use porto::services::proxy::*;
 
-    let table = PeerTable::new(config);
+    let table = PeerTable::init(config);
     info!("initialized domains {table}");
 
     let middleware = ServiceBuilder::new()
@@ -131,10 +131,10 @@ fn setup_service2(config: &PortoConfig) -> HyperService {
             Duration::from_secs(20),
         ));
 
-    let upstream = setup_upstream_service(table);
+    let proxy = setup_proxy_service(table);
 
     middleware
-        .service(upstream)
+        .service(proxy)
         .map_response(|resp| resp.map(|body| body.boxed()))
         .boxed_clone()
 }

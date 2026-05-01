@@ -146,7 +146,7 @@ where
     S::Future: Send + 'static,
     C: CacheStore + Send + 'static,
 {
-    type Response = Response<Body>;
+    type Response = S::Response;
     type Error = anyhow::Error;
     type Future = BoxFut<Self::Response, Self::Error>;
 

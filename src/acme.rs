@@ -269,8 +269,8 @@ impl PortoTLS {
             .inner
             .peers
             .get_domains()
-            .filter(|d| !guard.contains_key(*d))
-            .cloned()
+            .into_iter()
+            .filter(|d| !guard.contains_key(d))
             .collect();
 
         if !new_domains.is_empty() {
