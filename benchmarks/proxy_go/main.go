@@ -40,8 +40,8 @@ func main() {
 
 	log.Fatal(http.ListenAndServeTLS(
 		addr,
-		"../credentials/testpeer.com.pem",
-		"../credentials/testpeer.com-k.pem",
+		"../../credentials/testpeer.com.pem",
+		"../../credentials/testpeer.com-k.pem",
 		mux,
 	))
 }

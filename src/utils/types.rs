@@ -34,11 +34,11 @@ pub async fn is_tls(stream: &TcpStream) -> bool {
 
 /// maps domains to upstream addresses as either UDS or TCP connection
 #[derive(Debug, Clone)]
-pub struct UpstreamMap {
-    inner: Arc<UpstreamMapInner>,
+pub struct PeerTable {
+    inner: Arc<PeerTableInner>,
 }
 
-impl UpstreamMap {
+impl PeerTable {
     pub fn get_peer_addr_from_req<B>(&self, req: &Request<B>) -> Option<PeerAddr> {
         let host = super::get_target_host(req).ok()?;
         self.get_peer_addr(host).cloned().or_else(|| {
@@ -49,18 +49,23 @@ impl UpstreamMap {
 }
 
 #[derive(Debug)]
-struct UpstreamMapInner {
+struct PeerTableInner {
     map: HashMap<Domain, PeerAddr>,
 }
 
-impl UpstreamMap {
+struct Peer {
+    addr: PeerAddr,
+    alive: bool,
+}
+
+impl PeerTable {
     pub fn new(config: &PortoConfig) -> Self {
         let map = config
             .get_proxies()
             .map(|(d, a)| (d.clone(), a.clone()))
             .collect();
-        UpstreamMap {
-            inner: Arc::new(UpstreamMapInner { map }),
+        PeerTable {
+            inner: Arc::new(PeerTableInner { map }),
         }
     }
 
@@ -73,7 +78,7 @@ impl UpstreamMap {
     }
 }
 
-impl<const N: usize> TryFrom<&[(&str, &str); N]> for UpstreamMap {
+impl<const N: usize> TryFrom<&[(&str, &str); N]> for PeerTable {
     type Error = anyhow::Error;
 
     fn try_from(value: &[(&str, &str); N]) -> std::result::Result<Self, Self::Error> {
@@ -87,13 +92,13 @@ impl<const N: usize> TryFrom<&[(&str, &str); N]> for UpstreamMap {
             })
             .collect::<Result<_, _>>()?;
 
-        Ok(UpstreamMap {
-            inner: Arc::new(UpstreamMapInner { map }),
+        Ok(PeerTable {
+            inner: Arc::new(PeerTableInner { map }),
         })
     }
 }
 
-impl Display for UpstreamMap {
+impl Display for PeerTable {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         for (domain, peer) in self.inner.map.iter() {
             write!(f, "Domain: {domain}, peer: {peer:?}")?;

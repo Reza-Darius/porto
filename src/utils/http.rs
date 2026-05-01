@@ -10,7 +10,7 @@ use hyper::header::HOST;
 use hyper::header::HeaderValue;
 use hyper::{HeaderMap, Request, Response, StatusCode, Uri, Version};
 use tap::Pipe;
-use tokio::net::unix::UCred;
+use tokio::net::unix::{SocketAddr, UCred};
 use tracing::debug;
 use tracing::trace;
 
@@ -163,4 +163,10 @@ pub fn rewrite_request<B>(mut req: Request<B>, upstream_uri: Uri) -> Request<B> 
     );
 
     Request::from_parts(parts, body)
+}
+
+pub fn extract_remote_add<B>(req: &Request<B>) -> &SocketAddr {
+    req.extensions()
+        .get()
+        .expect("we attach it to every message")
 }

@@ -190,7 +190,7 @@ pub struct PortoTLS {
 struct PortoTLSInner {
     cred_path: PathBuf,
     // table of registered domains in the proxy
-    peers: UpstreamMap,
+    peers: PeerTable,
     // in memory cache
     certs: Mutex<HashMap<Domain, (CertChainPem, KeyPem)>>,
     pending_challenges: Mutex<HashMap<AcmeToken, KeyAuthorization>>,
@@ -200,7 +200,7 @@ struct PortoTLSInner {
 }
 
 impl PortoTLS {
-    pub fn init(config: &PortoConfig, peers: UpstreamMap) -> Result<Self> {
+    pub fn init(config: &PortoConfig, peers: PeerTable) -> Result<Self> {
         let path = config
             .credentials
             .clone()
@@ -555,7 +555,7 @@ mod tests {
 
         let addr = "0.0.0.0:5002"; // port for pebble ACME server
 
-        let domains = UpstreamMap::try_from(&[("acmetest.com", "1.1.1.1:6767")])?;
+        let domains = PeerTable::try_from(&[("acmetest.com", "1.1.1.1:6767")])?;
 
         let listener = tokio::net::TcpListener::bind(addr).await?;
         let tls = PortoTLS::init(&config, domains).unwrap();

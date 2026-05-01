@@ -29,18 +29,18 @@ pub fn setup_uds_client() -> Client<UnixConnector, Incoming> {
     Client::builder(hyper_util::rt::TokioExecutor::new())
         .pool_idle_timeout(std::time::Duration::from_secs(30))
         .pool_timer(TokioTimer::new())
-        .pool_max_idle_per_host(100) // Tune based on your backend
+        .pool_max_idle_per_host(40)
         .build(UnixConnector)
 }
 
-pub fn setup_tcp_client(domains: UpstreamMap) -> Client<HttpConnector<UpstreamResolver>, Incoming> {
+pub fn setup_tcp_client(domains: PeerTable) -> Client<HttpConnector<UpstreamResolver>, Incoming> {
     let mut connector = HttpConnector::new_with_resolver(UpstreamResolver::new(domains));
     connector.set_nodelay(true);
 
     Client::builder(hyper_util::rt::TokioExecutor::new())
         .pool_idle_timeout(std::time::Duration::from_secs(30))
         .pool_timer(TokioTimer::new())
-        .pool_max_idle_per_host(100) // Tune based on your backend
+        .pool_max_idle_per_host(40)
         .build(connector)
 }
 
@@ -48,11 +48,11 @@ pub fn setup_tcp_client(domains: UpstreamMap) -> Client<HttpConnector<UpstreamRe
 pub struct UpstreamService {
     uds_client: Client<UnixConnector, Incoming>,
     tcp_client: Client<HttpConnector<UpstreamResolver>, Incoming>,
-    table: UpstreamMap,
+    table: PeerTable,
 }
 
 impl UpstreamService {
-    pub fn new(domains: UpstreamMap) -> Self {
+    pub fn new(domains: PeerTable) -> Self {
         debug!("new upstream service");
         Self {
             table: domains.clone(),
@@ -184,11 +184,11 @@ impl Future for UpstreamFuture {
 
 #[derive(Clone)]
 pub struct UpstreamResolver {
-    peers: UpstreamMap,
+    peers: PeerTable,
 }
 
 impl UpstreamResolver {
-    fn new(domains: UpstreamMap) -> Self {
+    fn new(domains: PeerTable) -> Self {
         UpstreamResolver { peers: domains }
     }
 }

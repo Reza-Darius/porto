@@ -32,7 +32,7 @@ async fn main() -> Result<()> {
     let config = setup_config()?;
     let listener = setup_listener(&config);
     let tls_acceptor = setup_tls_from_file(&config)?;
-    let service = setup_service(&config);
+    let service = setup_service2(&config);
 
     let graceful = hyper_util::server::graceful::GracefulShutdown::new();
     let mut signal = std::pin::pin!(shutdown_signal());
@@ -45,7 +45,7 @@ async fn main() -> Result<()> {
         let service = service.clone();
 
         select! {
-            Ok((tcp_stream, addr)) = listener.accept() => {
+            Ok((tcp_stream, remote_addr)) = listener.accept() => {
                 tokio::spawn(async move {
                     // TLS handshake
                     let t = Instant::now();
@@ -62,7 +62,7 @@ async fn main() -> Result<()> {
                     let service = service
                         .clone()
                         .map_request(move |mut req: Request<_>| {
-                            req.extensions_mut().insert(addr);
+                            req.extensions_mut().insert(remote_addr);
                             req
                         }).pipe(TowerToHyperService::new);
 
@@ -102,8 +102,8 @@ async fn main() -> Result<()> {
 }
 
 fn setup_service(config: &PortoConfig) -> HyperService {
-    let domains = UpstreamMap::new(config);
-    info!("initialized domains {domains}");
+    let table = PeerTable::new(config);
+    info!("initialized domains {table}");
 
     let service = ServiceBuilder::new()
         .layer(TraceLayer::new_for_http())
@@ -113,59 +113,28 @@ fn setup_service(config: &PortoConfig) -> HyperService {
         ));
 
     service
-        .service(UpstreamService::new(domains))
+        .service(UpstreamService::new(table))
         .map_response(|resp| resp.map(|body| body.boxed()))
         .boxed_clone()
 }
 
-// fn setup_service2(config: &PortoConfig) -> HyperService {
-//     use parking_lot::Mutex;
-//     use porto::services::upstream3::*;
-//     use std::sync::Arc;
+fn setup_service2(config: &PortoConfig) -> HyperService {
+    use porto::services::upstream3::*;
 
-//     let domains = UpstreamMap::new(config);
-//     info!("initialized domains {domains}");
+    let table = PeerTable::new(config);
+    info!("initialized domains {table}");
 
-//     let middleware = ServiceBuilder::new()
-//         .layer(TraceLayer::new_for_http())
-//         .layer(TimeoutLayer::with_status_code(
-//             StatusCode::REQUEST_TIMEOUT,
-//             Duration::from_secs(20),
-//         ));
+    let middleware = ServiceBuilder::new()
+        .layer(TraceLayer::new_for_http())
+        .layer(TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            Duration::from_secs(20),
+        ));
 
-//     let connector = ServiceBuilder::new()
-//         // limit the amount of in-flight handshakes
-//         .concurrency_limit(100)
-//         .service(ConnectorService::new());
+    let upstream = setup_upstream_service(table);
 
-//     let cache = hyper_util::client::pool::cache::builder()
-//         .executor(TokioExecutor::new())
-//         .build(connector);
-
-//     let upstream = UpstreamService {
-//         peers: domains,
-//         pool: Arc::new(Mutex::new(cache)),
-//     };
-//     let worker_clone = upstream.pool.clone();
-
-//     tokio::spawn(async move {
-//         let cache = worker_clone;
-
-//         let mut timeout_check = tokio::time::interval(Duration::from_secs(30));
-//         let idle_dur = Duration::from_secs(20);
-
-//         loop {
-//             timeout_check.tick().await;
-//             let now = Instant::now();
-//             cache.lock().retain(|sender| {
-//                 if sender.sender.is_closed() {
-//                     return false;
-//                 }
-//                 now < sender.last_used + idle_dur
-//             });
-//         }
-//     });
-//     let svc = middleware.service(upstream);
-//     svc.map_response(|resp| resp.map(|body| body.boxed()))
-//         .boxed_clone()
-// }
+    middleware
+        .service(upstream)
+        .map_response(|resp| resp.map(|body| body.boxed()))
+        .boxed_clone()
+}

@@ -1,6 +1,6 @@
-use std::error::Error;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU16, Ordering};
+use std::task::Poll;
 use std::time::Instant;
 
 use anyhow::anyhow;
@@ -9,12 +9,9 @@ use hyper::body::Incoming;
 use hyper::client::conn::http1::SendRequest;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::{TokioExecutor, TokioIo};
-use parking_lot::Mutex;
+use pin_project_lite::pin_project;
 use tokio::net::{TcpStream, UnixStream};
-use tokio::sync::mpsc::Sender;
-use tokio::sync::oneshot::{Receiver, channel};
 use tokio::time::Duration;
-use tower::util::BoxCloneService;
 use tower::{Service, ServiceBuilder, ServiceExt};
 use tracing::{debug, error};
 
@@ -24,24 +21,20 @@ use crate::utils::*;
 
 // TODO: add some configuration, maybe a bulider
 
-pub fn setup_upstream_service(domains: UpstreamMap) -> impl Service<Request<Incoming>> {
-    let layer = ServiceBuilder::new()
-        // limit the amount of in-flight handshakes
-        // .concurrency_limit(100)
-        .service(ConnectorService::new());
+pub fn setup_upstream_service(peers: PeerTable) -> HyperService {
+    let connector = ServiceBuilder::new()
+        .concurrency_limit(10) // limits the amount of in-flight handshakes
+        .service(PeerConnector::new());
 
-    let cache = hyper_util::client::pool::cache::builder()
+    let pool = hyper_util::client::pool::cache::builder()
         .executor(TokioExecutor::new())
-        .build(layer);
+        .build(connector);
 
-    let svc = UpstreamService {
-        peers: domains,
-        pool: Arc::new(Mutex::new(cache)),
-    };
-    let worker_clone = svc.pool.clone();
+    let worker_clone = pool.clone();
 
+    // background worker to time out idle connections
     tokio::spawn(async move {
-        let cache = worker_clone;
+        let mut pool = worker_clone;
 
         let mut timeout_check = tokio::time::interval(Duration::from_secs(30));
         let idle_dur = Duration::from_secs(20);
@@ -49,7 +42,7 @@ pub fn setup_upstream_service(domains: UpstreamMap) -> impl Service<Request<Inco
         loop {
             timeout_check.tick().await;
             let now = Instant::now();
-            cache.lock().retain(|sender| {
+            pool.retain(|sender| {
                 if sender.sender.is_closed() {
                     return false;
                 }
@@ -57,23 +50,36 @@ pub fn setup_upstream_service(domains: UpstreamMap) -> impl Service<Request<Inco
             });
         }
     });
-    svc
+    ServiceBuilder::new()
+        .layer_fn(|inner| AddrService::new(peers.clone(), inner))
+        .service(PoolService::new(peers.clone(), pool))
+        .boxed_clone()
+    // UpstreamService::new(peers, pool).boxed_clone()
 }
 
+/// wrapper around a connection pool
 #[derive(Clone)]
-pub struct UpstreamService<S> {
-    pub peers: UpstreamMap,
-    pub pool: Arc<Mutex<S>>,
+pub struct PoolService<Pool> {
+    pub peers: PeerTable,
+    pub pool: Pool,
 }
 
-impl<S, M> Service<Request<Incoming>> for UpstreamService<S>
+impl<Pool> PoolService<Pool> {
+    pub fn new(peers: PeerTable, pool: Pool) -> Self {
+        PoolService { peers, pool }
+    }
+}
+
+impl<S, M> Service<Request<Incoming>> for PoolService<S>
 where
-    S: Service<PeerAddr, Response = M> + Send + 'static,
+    // the pool is a service that gives another service
+    S: Service<PeerAddr, Response = M> + Send + 'static + Clone,
     S::Future: Send + 'static,
-    S::Error: Into<anyhow::Error> + Send + 'static,
+    S::Error: Into<anyhow::Error>,
+    // this is the sender the pool spits out
     M: Service<Request<Incoming>, Response = Response<Body>> + Send + 'static,
     M::Future: Send + 'static,
-    M::Error: Into<anyhow::Error> + Send + 'static,
+    M::Error: Into<anyhow::Error>,
 {
     type Response = Response<Body>;
     type Error = anyhow::Error;
@@ -83,82 +89,147 @@ where
         &mut self,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::result::Result<(), Self::Error>> {
-        self.pool.lock().poll_ready(cx).map_err(Into::into)
+        self.pool.poll_ready(cx).map_err(Into::into)
     }
 
     fn call(&mut self, req: Request<Incoming>) -> Self::Future {
-        let pool = self.pool.clone();
+        let mut pool = self.pool.clone();
         let table = self.peers.clone();
 
         Box::pin(async move {
-            // get host name
-            let Ok(req_host) = get_target_host(&req) else {
-                debug!("no host header found on request");
-                return Ok(response(StatusCode::BAD_REQUEST));
-            };
+            // // get host name
+            // let Ok(req_host) = get_target_host(&req) else {
+            //     debug!("no host header found on request");
+            //     return Ok(response(StatusCode::BAD_REQUEST));
+            // };
 
-            // get associated socket name
-            let Some(peer_addr) = table.get_peer_addr(req_host).cloned() else {
-                debug!(requested_host = %req_host, "coulndnt retrieve socket name");
-                return Ok(response(StatusCode::NOT_FOUND));
-            };
+            // // get associated socket name
+            // let Some(peer_addr) = table.get_peer_addr(req_host).cloned() else {
+            //     debug!(requested_host = %req_host, "coulndnt retrieve socket name");
+            //     return Ok(response(StatusCode::NOT_FOUND));
+            // };
 
-            let req = match &peer_addr {
-                PeerAddr::Uds(socket_addr) => {
-                    let upstream_uri = hyperlocal::Uri::new(socket_addr, req.uri().path()).into();
-                    rewrite_request(req, upstream_uri)
-                }
-                PeerAddr::Ipv4(_) => {
-                    let mut parts = req.uri().clone().into_parts();
-                    debug!(?parts, "request parts");
-                    parts.scheme = Some("http".parse().expect("its hardcoded"));
-                    parts.authority = parts
-                        .authority
-                        .map(|auth| strip_port(auth.as_str()).parse().unwrap())
-                        .or_else(|| Some(req_host.parse().unwrap()));
+            // let uri = req.uri().clone();
+            // let req = rewrite_request(req, uri);
 
-                    let upstream_uri = hyper::Uri::from_parts(parts).unwrap();
+            // let Ok(mut sender) = pool
+            //     .ready() // important to call ready here, otherwise the worker panics
+            //     .await
+            //     .map_err(Into::into)?
+            //     .call(peer_addr)
+            //     .await
+            //     .map_err(Into::into)
+            //     .inspect_err(|e| error!(%e, "couldnt get sender"))
+            // else {
+            //     return Ok(response(StatusCode::INTERNAL_SERVER_ERROR));
+            // };
 
-                    rewrite_request(req, upstream_uri)
-                }
-            };
-            let fut = pool.lock().call(peer_addr);
-
-            let Ok(mut sender) = fut.await.map_err(Into::into) else {
-                error!("couldnt get sender");
+            let peer_addr = req.extensions().get().cloned().expect("it should be there");
+            let Ok(mut sender) = pool
+                .ready() // important to call ready here, otherwise the worker panics
+                .await
+                .map_err(Into::into)?
+                .call(peer_addr)
+                .await
+                .map_err(Into::into)
+                .inspect_err(|e| error!(%e, "couldnt get sender"))
+            else {
                 return Ok(response(StatusCode::INTERNAL_SERVER_ERROR));
             };
 
-            sender.call(req).await.map_err(Into::into)
+            sender.call(req).await.map_err(Into::into).or_else(|e| {
+                error!(%e, "sending failed");
+                Ok(response(StatusCode::INTERNAL_SERVER_ERROR))
+            })
         })
     }
 }
 
-// pub struct AddrService<S> {
-//     peers: UpstreamMap,
-//     inner: S,
-// }
+/// rewrites the request and attaches PeerAddr for the connector
+#[derive(Clone)]
+pub struct AddrService<S> {
+    peers: PeerTable,
+    inner: S,
+}
 
-// impl<S> Service<Request<Incoming>> for AddrService<S>
-// where
-//     S: Service<PeerAddr>,
-// {
-//     type Response = Response<B>;
-//     type Error;
-//     type Future;
+impl<S> AddrService<S> {
+    pub fn new(peers: PeerTable, inner: S) -> Self {
+        AddrService { peers, inner }
+    }
+}
 
-//     fn poll_ready(
-//         &mut self,
-//         cx: &mut std::task::Context<'_>,
-//     ) -> std::task::Poll<Result<(), Self::Error>> {
-//         todo!()
-//     }
+impl<S, B> Service<Request<B>> for AddrService<S>
+where
+    S: Service<Request<B>, Response = Response<Body>>,
+    B: hyper::body::Body,
+    S::Error: Into<anyhow::Error>,
+{
+    type Response = S::Response;
+    type Error = anyhow::Error;
+    type Future = AddrFuture<S::Future>;
 
-//     fn call(&mut self, req: Request<Incoming>) -> Self::Future {
-//         todo!()
-//     }
-// }
+    fn poll_ready(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx).map_err(Into::into)
+    }
 
+    fn call(&mut self, req: Request<B>) -> Self::Future {
+        // get host name
+        let Ok(req_host) = get_target_host(&req) else {
+            debug!("no host header found on request");
+            return AddrFuture::Error {
+                code: StatusCode::BAD_REQUEST,
+            };
+        };
+
+        // get associated socket name
+        let Some(peer_addr) = self.peers.get_peer_addr(req_host).cloned() else {
+            debug!(requested_host = %req_host, "coulndnt retrieve socket name");
+            return AddrFuture::Error {
+                code: StatusCode::NOT_FOUND,
+            };
+        };
+
+        let uri = req.uri().clone();
+        let mut req = rewrite_request(req, uri);
+        req.extensions_mut().insert(peer_addr);
+
+        AddrFuture::Service {
+            fut: self.inner.call(req),
+        }
+    }
+}
+
+pin_project! {
+    #[project = EnumProj]
+    pub enum AddrFuture<F> {
+        Service {#[pin] fut: F},
+        Error{code: StatusCode},
+    }
+}
+
+impl<F, E> Future for AddrFuture<F>
+where
+    F: Future<Output = Result<Response<Body>, E>>,
+    E: Into<anyhow::Error>,
+{
+    type Output = Result<Response<Body>, anyhow::Error>;
+
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        let this = self.project();
+        match this {
+            EnumProj::Service { fut } => fut.poll(cx).map_err(Into::into),
+            EnumProj::Error { code } => Poll::Ready(Ok(response(*code))),
+        }
+    }
+}
+
+/// thin service wrapper over a sender
 pub struct UpstreamSender {
     pub last_used: Instant,
     pub sender: SendRequest<Incoming>,
@@ -187,20 +258,22 @@ impl Service<Request<Incoming>> for UpstreamSender {
     }
 }
 
+/// a service to establish a connection to a backend via UDS or TCP
 #[derive(Clone, Default, Debug)]
-pub struct ConnectorService {
-    count: Arc<AtomicU16>,
+pub struct PeerConnector {
+    /// number of active connections
+    n_connections: Arc<AtomicU16>,
 }
 
-impl ConnectorService {
+impl PeerConnector {
     pub fn new() -> Self {
-        ConnectorService {
-            count: Arc::new(0.into()),
+        PeerConnector {
+            n_connections: Arc::new(0.into()),
         }
     }
 }
 
-impl Service<PeerAddr> for ConnectorService {
+impl Service<PeerAddr> for PeerConnector {
     type Response = UpstreamSender;
     type Error = anyhow::Error;
     type Future = BoxFut<Self::Response, Self::Error>;
@@ -213,7 +286,7 @@ impl Service<PeerAddr> for ConnectorService {
     }
 
     fn call(&mut self, req: PeerAddr) -> Self::Future {
-        let count = self.count.clone();
+        let n_connections = self.n_connections.clone();
         Box::pin(async move {
             debug!(%req, "dialing new upstream connection");
 
@@ -223,7 +296,7 @@ impl Service<PeerAddr> for ConnectorService {
 
                     let stream = TokioIo::new(TcpStream::connect(sock_addr).await?);
                     let (sender, conn) = hyper::client::conn::http1::handshake(stream).await?;
-                    let n = count.fetch_add(1, Ordering::Relaxed) + 1;
+                    let n = n_connections.fetch_add(1, Ordering::Relaxed) + 1;
 
                     debug!(
                         n_con = n,
@@ -235,7 +308,7 @@ impl Service<PeerAddr> for ConnectorService {
                         if let Err(err) = conn.await {
                             error!("TCP Connection failed: {err:#}");
                         }
-                        let n = count.fetch_sub(1, Ordering::Relaxed) - 1;
+                        let n = n_connections.fetch_sub(1, Ordering::Relaxed) - 1;
                         debug!(n_con = n, "shutting down TCP connection");
                     });
                     sender
@@ -245,7 +318,7 @@ impl Service<PeerAddr> for ConnectorService {
 
                     let stream = TokioIo::new(UnixStream::connect(sock_addr).await?);
                     let (sender, conn) = hyper::client::conn::http1::handshake(stream).await?;
-                    let n = count.fetch_add(1, Ordering::Relaxed) + 1;
+                    let n = n_connections.fetch_add(1, Ordering::Relaxed) + 1;
 
                     debug!(
                         n_con = n,
@@ -257,7 +330,7 @@ impl Service<PeerAddr> for ConnectorService {
                         if let Err(err) = conn.await {
                             error!("UDS Connection failed: {err:#}");
                         }
-                        let n = count.fetch_sub(1, Ordering::Relaxed) - 1;
+                        let n = n_connections.fetch_sub(1, Ordering::Relaxed) - 1;
                         debug!(n_con = n, "shutting down UDS connection");
                     });
                     sender
