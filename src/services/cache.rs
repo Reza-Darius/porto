@@ -1,16 +1,17 @@
 #![allow(dead_code, clippy::new_without_default)]
 
-use std::{borrow::Borrow, collections::HashMap, sync::Arc};
+use std::{borrow::Borrow, collections::HashMap, iter::FusedIterator, sync::Arc, task::Poll};
 
 use anyhow::{Result, anyhow};
 use derive_more::Display;
-use http_body_util::BodyExt;
+use http_body_util::{BodyExt, combinators::Collect};
 use hyper::{
     Request, Response,
     body::{Bytes, Incoming},
     header::HOST,
 };
 use parking_lot::Mutex;
+use pin_project_lite::pin_project;
 use serde::{Deserialize, Serialize};
 use tower::{Layer, Service};
 use tracing::{debug, error, trace};
@@ -22,11 +23,8 @@ where
     Self: Clone,
 {
     fn get(&self, req: &CacheKey) -> Option<Response<Body>>;
-    fn insert(
-        &self,
-        key: CacheKey,
-        value: Response<Body>,
-    ) -> impl Future<Output = Result<Response<Body>>> + Send;
+    fn insert(&self, key: CacheKey, value: Response<Body>)
+    -> BoxFut<Response<Body>, anyhow::Error>;
 }
 
 #[derive(Debug, Clone, Display, Hash, Eq, PartialEq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -92,15 +90,22 @@ impl CacheStore for Store {
             .map(|r| r.map(full))
     }
 
-    async fn insert(&self, key: CacheKey, value: Response<Body>) -> Result<Response<Body>> {
-        trace!("trying to insert response with {key}");
+    fn insert(
+        &self,
+        key: CacheKey,
+        value: Response<Body>,
+    ) -> BoxFut<Response<Body>, anyhow::Error> {
+        let handle = self.inner.clone();
+        Box::pin(async move {
+            trace!("trying to insert response with {key}");
 
-        let (parts, body) = value.into_parts();
-        let body = body.collect().await?.to_bytes();
-        let resp = Response::from_parts(parts, body);
+            let (parts, body) = value.into_parts();
+            let body = body.collect().await?.to_bytes();
+            let resp = Response::from_parts(parts, body);
 
-        self.inner.store.lock().insert(key, resp.clone());
-        Ok(resp.map(full))
+            handle.store.lock().insert(key, resp.clone());
+            Ok(resp.map(full))
+        })
     }
 }
 
@@ -142,13 +147,14 @@ pub struct ResponseCache<S, C> {
 impl<S, C> Service<Request<Incoming>> for ResponseCache<S, C>
 where
     S: Service<Request<Incoming>, Response = Response<Body>> + Send + 'static,
-    S::Error: Into<anyhow::Error>,
+    S::Error: Into<anyhow::Error> + std::error::Error,
     S::Future: Send + 'static,
     C: CacheStore + Send + 'static,
 {
     type Response = S::Response;
     type Error = anyhow::Error;
-    type Future = BoxFut<Self::Response, Self::Error>;
+    type Future = CacheResponseFuture<S::Future, C>;
+    // type Future = BoxFut<Self::Response, Self::Error>;
 
     fn poll_ready(
         &mut self,
@@ -156,32 +162,153 @@ where
     ) -> std::task::Poll<Result<(), Self::Error>> {
         self.inner.poll_ready(cx).map_err(Into::into)
     }
-
     fn call(&mut self, req: Request<Incoming>) -> Self::Future {
         let Ok(key) = CacheKey::from_req(&req) else {
             error!("couldnt create key from request for cache");
-            let f = self.inner.call(req);
-            return Box::pin(async { f.await.map_err(Into::into) });
+            let fut = self.inner.call(req);
+            return CacheResponseFuture::CacheMiss {
+                svc_fut: fut,
+                handle: None,
+                svc_resp: None,
+                collect_fut: None,
+            };
         };
 
         if let Some(resp) = self.cache.get(&key) {
             debug!("retrieved response from cache");
-            return Box::pin(async move { Ok(resp) });
+            return CacheResponseFuture::CacheHit { resp: Some(resp) };
         };
 
-        let handle = self.cache.clone();
-        let resp = self.inner.call(req);
+        CacheResponseFuture::CacheMiss {
+            svc_fut: self.inner.call(req),
+            handle: Some((self.cache.clone(), key)),
+            svc_resp: None,
+            collect_fut: None,
+        }
+    }
 
-        let f = async move {
-            let Ok(resp) = resp.await else {
-                return Ok(internal_error());
-            };
-            let Ok(resp) = handle.insert(key, resp).await else {
-                error!("couldnt insert response into cache");
-                return Ok(internal_error());
-            };
-            Ok(resp)
-        };
-        Box::pin(f)
+    // fn call(&mut self, req: Request<Incoming>) -> Self::Future {
+    //     let Ok(key) = CacheKey::from_req(&req) else {
+    //         error!("couldnt create key from request for cache");
+    //         let fut = self.inner.call(req);
+    //         return Box::pin(async { fut.await.map_err(Into::into) });
+    //     };
+
+    //     if let Some(resp) = self.cache.get(&key) {
+    //         debug!("retrieved response from cache");
+    //         return Box::pin(async move { Ok(resp) });
+    //     };
+
+    //     let cache = self.cache.clone();
+    //     let fut = self.inner.call(req);
+
+    //     Box::pin(async move {
+    //         let Ok(resp) = fut.await else {
+    //             return Ok(internal_error());
+    //         };
+    //         let Ok(resp) = cache.insert(key, resp).await else {
+    //             error!("couldnt insert response into cache");
+    //             return Ok(internal_error());
+    //         };
+    //         Ok(resp)
+    //     })
+    // }
+}
+
+pin_project! {
+    #[project = EnumProj]
+    pub enum CacheResponseFuture<F, C> {
+        /// in case of a cache miss, we call the inner service
+        /// if there is no handle provided, we have to assume we cannot cache the response
+        CacheMiss{
+            #[pin] svc_fut: F,
+            handle: Option<(C, CacheKey)>,
+            svc_resp: Option<Response<Body>>,
+            collect_fut: Option<BoxFut<Response<Body>, anyhow::Error>>
+        },
+        /// we got something to return immediately!
+        /// the option type is only for calling .take()
+        CacheHit{ resp: Option<Response<Body>>}
+    }
+}
+
+impl<Fut, Err, Cache> Future for CacheResponseFuture<Fut, Cache>
+where
+    Fut: Future<Output = Result<Response<Body>, Err>>,
+    Err: Into<anyhow::Error> + std::error::Error,
+    Cache: CacheStore + Send + 'static,
+{
+    type Output = Result<Response<Body>, anyhow::Error>;
+
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        let this = self.project();
+
+        match this {
+            EnumProj::CacheHit { resp } => {
+                Poll::Ready(Ok(resp.take().expect("we are done and wont poll it again")))
+            }
+            EnumProj::CacheMiss {
+                mut svc_fut,
+                handle,
+                svc_resp,
+                collect_fut,
+            } => {
+                loop {
+                    // we inserted into the cache, poll it until we get a response
+                    if let Some(fut) = collect_fut.as_mut() {
+                        match fut.as_mut().poll(cx) {
+                            Poll::Pending => return Poll::Pending,
+                            Poll::Ready(Ok(resp)) => return Poll::Ready(Ok(resp)),
+                            Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                        }
+                    }
+
+                    // did we call the service?
+                    match svc_resp.take() {
+                        // we called the service and we have a handle and key to cache the response
+                        Some(resp) if let Some((cache, key)) = handle.take() => {
+                            let fut = cache.insert(key.clone(), resp);
+                            *collect_fut = Some(fut);
+                            return Poll::Pending;
+                        }
+                        // return without caching
+                        Some(resp) => return Poll::Ready(Ok(resp)),
+                        // call the service
+                        None => match svc_fut.as_mut().poll(cx) {
+                            Poll::Pending => return Poll::Pending,
+                            Poll::Ready(Err(e)) => return Poll::Ready(Err(e.into())),
+                            Poll::Ready(Ok(resp)) => {
+                                *svc_resp = Some(resp);
+                                continue; // we could alternatively return poll pending here
+                            }
+                        },
+                    };
+                }
+
+                // if let Some(resp) = svc_resp.take() {
+                //     if let Some((cache, key)) = handle.take() {
+                //         let fut = cache.insert(key.clone(), resp);
+                //         *collect_fut = Some(fut);
+                //         return Poll::Pending;
+                //     } else {
+                //         // we dont cache and return immediately
+                //         return Poll::Ready(Ok(resp));
+                //     }
+                // }
+
+                // // poll the inner service
+                // match svc_fut.poll(cx) {
+                //     Poll::Pending => Poll::Pending,
+                //     Poll::Ready(Err(e)) => Poll::Ready(Err(e.into())),
+                //     Poll::Ready(Ok(resp)) => {
+                //         *svc_resp = Some(resp);
+                //         Poll::Pending // next poll will handle it
+                //     }
+                // }
+            }
+        }
     }
 }
