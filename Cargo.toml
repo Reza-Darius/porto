@@ -43,6 +43,8 @@ pin-project-lite = "0.2.17"
 futures-util = "0.3.32"
 tokio-util = "0.7.18"
 http = "1.4.0"
+http-cache-semantics = "3.0.0"
+foyer = "0.22.3"
 
 [[bin]]
 name = "server"

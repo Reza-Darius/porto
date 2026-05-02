@@ -1,6 +1,8 @@
 use std::ops::Deref;
 
 use anyhow::Result;
+use http::StatusCode;
+use http::header::CACHE_CONTROL;
 use http_body_util::BodyExt;
 use hyper::service::service_fn;
 use hyper::{Request, Response, body::Incoming, server::conn::http1};
@@ -51,7 +53,17 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn echo(req: Request<Incoming>) -> Result<Response<Body>, hyper::Error> {
+async fn echo(req: Request<Incoming>) -> Result<Response<Body>, anyhow::Error> {
     info!("received request: {req:?}");
-    Ok(Response::new(req.into_body().boxed()))
+    match req.uri().path() {
+        uri if uri.contains("cache") => Response::builder()
+            .status(StatusCode::OK)
+            .header(CACHE_CONTROL, "max-age=60")
+            .body(req.into_body().boxed())
+            .map_err(Into::into),
+        _ => Response::builder()
+            .status(StatusCode::OK)
+            .body(req.into_body().boxed())
+            .map_err(Into::into),
+    }
 }

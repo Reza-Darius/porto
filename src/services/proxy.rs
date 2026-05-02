@@ -4,13 +4,11 @@ use std::task::Poll;
 use std::time::Instant;
 
 use anyhow::anyhow;
-use http::{Uri, Version};
 use http_body_util::BodyExt;
 use hyper::body::Incoming;
 use hyper::client::conn::http1::SendRequest;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::{TokioExecutor, TokioIo};
-use pin_project_lite::pin_project;
 use tokio::net::{TcpStream, UnixStream};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::time::Duration;
@@ -24,7 +22,7 @@ use crate::utils::*;
 
 // TODO: add some configuration, maybe a bulider
 
-pub fn setup_proxy_service(peers: PeerTable) -> HyperService {
+pub fn setup_proxy_service() -> HyperService {
     let connector = ServiceBuilder::new()
         // .concurrency_limit(10) // limits the amount of in-flight handshakes
         .service(PeerConnector::new(5));
@@ -54,26 +52,25 @@ pub fn setup_proxy_service(peers: PeerTable) -> HyperService {
         }
     });
     ServiceBuilder::new()
-        .layer_fn(|inner| AddrService::new(peers.clone(), inner))
-        .service(PoolService::new(cache))
+        .service(ConnectorPool::new(cache))
         .boxed_clone()
 }
 
 /// wrapper around a connection pool
 #[derive(Clone)]
-pub struct PoolService<Cache> {
+pub struct ConnectorPool<Cache> {
     pub pool: Cache,
 }
 
-impl<Cache> PoolService<Cache> {
+impl<Cache> ConnectorPool<Cache> {
     pub fn new(pool: Cache) -> Self {
-        PoolService { pool }
+        ConnectorPool { pool }
     }
 }
 
-// i apologize that you have to see this, i couldnt make this any other way because Cache from hyper is
-// not a namable type
-impl<Cache, Sender> Service<Request<Incoming>> for PoolService<Cache>
+// i apologize that you have to see this, i was unable to make this work any other way because hyper Cache
+// is not a namable type
+impl<Cache, Sender> Service<Request<Incoming>> for ConnectorPool<Cache>
 where
     // the cache is a service which returns another impl service
     Cache: Service<PeerAddr, Response = Sender> + Send + 'static + Clone,
@@ -103,7 +100,7 @@ where
                 .extensions()
                 .get()
                 .cloned()
-                .ok_or_else(|| anyhow!("PeerAddr extension not found"))?;
+                .ok_or_else(|| anyhow!("PeerAddr extension not found, req: {req:?}"))?;
 
             let Ok(mut sender) = pool
                 .ready() // important to call ready here, otherwise the worker panics
@@ -124,6 +121,7 @@ where
                 .call(req)
                 .await
                 .map_err(Into::into)
+                .inspect(|resp| debug!(?resp, "response from backend"))
                 .or_else(|e| {
                     error!(%e, "sending failed");
                     Ok(response(StatusCode::INTERNAL_SERVER_ERROR))
@@ -132,123 +130,9 @@ where
     }
 }
 
-/// rewrites the request and attaches PeerAddr for the connector
-///
-/// if this service fails, it will respond with Ok(http_response)
-///
-/// however, if the underlying service fails, it will propagate that error
-#[derive(Clone)]
-pub struct AddrService<S> {
-    peers: PeerTable,
-    inner: S,
-}
-
-impl<S> AddrService<S> {
-    pub fn new(peers: PeerTable, inner: S) -> Self {
-        AddrService { peers, inner }
-    }
-}
-
-impl<S, B> Service<Request<B>> for AddrService<S>
-where
-    S: Service<Request<B>, Response = Response<Body>> + Send + 'static + Clone,
-    B: hyper::body::Body,
-    S::Error: Into<anyhow::Error>,
-    S::Future: Send + 'static,
-{
-    type Response = S::Response;
-    type Error = anyhow::Error;
-    type Future = AddrFuture<S::Future>;
-
-    fn poll_ready(
-        &mut self,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Result<(), Self::Error>> {
-        self.inner.poll_ready(cx).map_err(Into::into)
-    }
-
-    fn call(&mut self, req: Request<B>) -> Self::Future {
-        let (mut parts, body) = req.into_parts();
-        let Some(path_and_query) = parts.uri.path_and_query() else {
-            debug!("no path found on request");
-            return AddrFuture::Error {
-                code: StatusCode::BAD_REQUEST,
-            };
-        };
-
-        // get host name
-        let Some(req_host) = get_host(&parts) else {
-            debug!("no host header found on request");
-            return AddrFuture::Error {
-                code: StatusCode::BAD_REQUEST,
-            };
-        };
-
-        // get associated socket name
-        let Some(peer_addr) = self.peers.get_peer_addr(req_host) else {
-            debug!(requested_host = %req_host, "coulndnt retrieve socket name");
-            return AddrFuture::Error {
-                code: StatusCode::NOT_FOUND,
-            };
-        };
-
-        // rewriting request
-
-        parts.headers.insert(
-            hyper::header::HOST,
-            hyper::header::HeaderValue::from_str(req_host).unwrap(),
-        );
-
-        if parts.version == Version::HTTP_2 {
-            parts.version = Version::HTTP_11;
-        }
-
-        parts.uri = Uri::builder()
-            .path_and_query(path_and_query.to_owned())
-            .build()
-            .unwrap();
-
-        debug!(?parts, "rewritten to response");
-
-        let mut req = Request::from_parts(parts, body);
-
-        adjust_header(&mut req);
-        req.extensions_mut().insert(peer_addr);
-
-        AddrFuture::Service {
-            fut: self.inner.call(req),
-        }
-    }
-}
-
-pin_project! {
-    #[project = EnumProj]
-    pub enum AddrFuture<F> {
-        Service {#[pin] fut: F},
-        Error{code: StatusCode},
-    }
-}
-
-impl<F, E> Future for AddrFuture<F>
-where
-    F: Future<Output = Result<Response<Body>, E>>,
-    E: Into<anyhow::Error>,
-{
-    type Output = Result<Response<Body>, anyhow::Error>;
-
-    fn poll(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Self::Output> {
-        let this = self.project();
-        match this {
-            EnumProj::Service { fut } => fut.poll(cx).map_err(Into::into),
-            EnumProj::Error { code } => Poll::Ready(Ok(response(*code))),
-        }
-    }
-}
-
 /// thin service wrapper over a sender
+///
+/// this is whats being cached
 pub struct UpstreamSender<B> {
     pub last_used: Instant,
     pub sender: SendRequest<B>,

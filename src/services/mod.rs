@@ -12,6 +12,7 @@ use crate::{
     utils::{HyperService, PeerTable},
 };
 
+mod addr;
 mod cache;
 mod health;
 mod proxy;
@@ -45,9 +46,10 @@ pub fn setup_service2(config: &PortoConfig) -> HyperService {
             StatusCode::REQUEST_TIMEOUT,
             Duration::from_secs(20),
         ))
+        .layer_fn(|inner| addr::AddrService::new(table.clone(), inner))
         .layer(ResponseCacheLayer::new());
 
-    let proxy = proxy::setup_proxy_service(table);
+    let proxy = proxy::setup_proxy_service();
 
     middleware
         .service(proxy)
