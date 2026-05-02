@@ -15,13 +15,16 @@ use crate::utils::*;
 /// however, if the underlying service fails, it will propagate that error
 #[derive(Clone)]
 pub struct AddrService<S> {
-    peers: PeerTable,
+    table: PeerTable,
     inner: S,
 }
 
 impl<S> AddrService<S> {
     pub fn new(peers: PeerTable, inner: S) -> Self {
-        AddrService { peers, inner }
+        AddrService {
+            table: peers,
+            inner,
+        }
     }
 }
 
@@ -62,7 +65,7 @@ where
         };
 
         // get associated socket name
-        let Some(peer_addr) = self.peers.get_peer_addr(req_host) else {
+        let Some(peer_addr) = self.table.get_peer_addr(req_host) else {
             debug!(requested_host = %req_host, "coulndnt retrieve socket name");
             return AddrFuture::Error {
                 code: StatusCode::NOT_FOUND,
@@ -121,6 +124,28 @@ where
         match this {
             EnumProj::Service { fut } => fut.poll(cx).map_err(Into::into),
             EnumProj::Error { code } => Poll::Ready(Ok(response(*code))),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AddrServiceLayer {
+    table: PeerTable,
+}
+
+impl AddrServiceLayer {
+    pub fn new(table: PeerTable) -> Self {
+        AddrServiceLayer { table }
+    }
+}
+
+impl<S> tower::Layer<S> for AddrServiceLayer {
+    type Service = AddrService<S>;
+
+    fn layer(&self, inner: S) -> Self::Service {
+        AddrService {
+            inner,
+            table: self.table.clone(),
         }
     }
 }

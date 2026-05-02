@@ -35,7 +35,12 @@ pub struct PortoConfig {
     // for ACME
     pub credentials: Option<PathBuf>,
     proxy: Vec<Proxy>,
+    #[serde(skip)]
+    service: ServiceConfig,
 }
+
+#[derive(Debug, Default)]
+struct ServiceConfig {}
 
 #[derive(Debug, Deserialize)]
 struct Proxy {
