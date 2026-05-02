@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Result, anyhow};
+use http::request::Parts;
 use http_body_util::Empty;
 use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
@@ -77,25 +78,40 @@ pub fn internal_error() -> Response<Body> {
 }
 
 /// retrieves the targeted host from the request
-pub fn get_target_host<B>(req: &Request<B>) -> Result<&str> {
+pub fn get_target_host<B>(req: &Request<B>) -> Option<&str> {
     match req.version() {
         Version::HTTP_2 => req
             .uri()
             .authority()
             .map(|au| au.host())
-            .inspect(|host| debug!("found host in request: {host}"))
-            .ok_or_else(|| anyhow!("no authority or host header found on http2 request")),
+            .inspect(|host| debug!("found host in request: {host}")),
         _ => {
             // this works only for origin form
-            let host = req
-                .headers()
+            req.headers()
                 .get(HOST)
-                .ok_or_else(|| anyhow!("no host header on http1 request"))?
-                .to_str()?
-                .pipe(strip_port);
+                .and_then(|host| host.to_str().ok())
+                .map(strip_port)
+                .inspect(|host| debug!("found host in request: {host}"))
+        }
+    }
+}
 
-            debug!("found host in request: {host}");
-            Ok(host)
+/// retrieves the targeted host from the request
+pub fn get_host(parts: &Parts) -> Option<&str> {
+    match parts.version {
+        Version::HTTP_2 => parts
+            .uri
+            .authority()
+            .map(|au| au.host())
+            .inspect(|host| debug!("found host in request: {host}")),
+        _ => {
+            // this works only for origin form
+            parts
+                .headers
+                .get(HOST)
+                .and_then(|host| host.to_str().ok())
+                .map(strip_port)
+                .inspect(|host| debug!("found host in request: {host}"))
         }
     }
 }

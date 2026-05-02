@@ -1,10 +1,10 @@
 #![allow(dead_code, clippy::new_without_default)]
 
-use std::{borrow::Borrow, collections::HashMap, iter::FusedIterator, sync::Arc, task::Poll};
+use std::{borrow::Borrow, collections::HashMap, sync::Arc, task::Poll};
 
 use anyhow::{Result, anyhow};
 use derive_more::Display;
-use http_body_util::{BodyExt, combinators::Collect};
+use http_body_util::BodyExt;
 use hyper::{
     Request, Response,
     body::{Bytes, Incoming},
@@ -12,23 +12,21 @@ use hyper::{
 };
 use parking_lot::Mutex;
 use pin_project_lite::pin_project;
-use serde::{Deserialize, Serialize};
 use tower::{Layer, Service};
-use tracing::{debug, error, trace};
+use tracing::{debug, error};
 
 use crate::utils::*;
 
 trait CacheStore
 where
-    Self: Clone,
+    Self: Clone + Send + 'static,
 {
     fn get(&self, req: &CacheKey) -> Option<Response<Body>>;
     fn insert(&self, key: CacheKey, value: Response<Body>)
     -> BoxFut<Response<Body>, anyhow::Error>;
 }
 
-#[derive(Debug, Clone, Display, Hash, Eq, PartialEq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(transparent)]
+#[derive(Debug, Clone, Display, Hash, Eq, PartialEq, PartialOrd, Ord)]
 struct CacheKey(String);
 
 impl Borrow<str> for CacheKey {
@@ -38,7 +36,7 @@ impl Borrow<str> for CacheKey {
 }
 
 impl CacheKey {
-    fn from_req<B: hyper::body::Body>(req: &Request<B>) -> Result<Self> {
+    fn from_req<B>(req: &Request<B>) -> Result<Self> {
         let header = req.headers();
         let mut key: String = String::new();
 
@@ -64,7 +62,7 @@ impl CacheKey {
 }
 
 #[derive(Debug, Clone)]
-struct Store {
+pub struct Store {
     inner: Arc<StoreInner>,
 }
 
@@ -80,7 +78,7 @@ impl Store {
 
 impl CacheStore for Store {
     fn get(&self, key: &CacheKey) -> Option<Response<Body>> {
-        trace!("trying to retrieve response with {key}");
+        debug!("trying to retrieve response with {key}");
 
         self.inner
             .store
@@ -97,7 +95,7 @@ impl CacheStore for Store {
     ) -> BoxFut<Response<Body>, anyhow::Error> {
         let handle = self.inner.clone();
         Box::pin(async move {
-            trace!("trying to insert response with {key}");
+            debug!("trying to insert response with {key}");
 
             let (parts, body) = value.into_parts();
             let body = body.collect().await?.to_bytes();
@@ -144,12 +142,12 @@ pub struct ResponseCache<S, C> {
     cache: C,
 }
 
-impl<S, C> Service<Request<Incoming>> for ResponseCache<S, C>
+impl<S, C, B> Service<Request<B>> for ResponseCache<S, C>
 where
-    S: Service<Request<Incoming>, Response = Response<Body>> + Send + 'static,
-    S::Error: Into<anyhow::Error> + std::error::Error,
+    S: Service<Request<B>, Response = Response<Body>> + Send + 'static,
+    S::Error: Into<anyhow::Error>,
     S::Future: Send + 'static,
-    C: CacheStore + Send + 'static,
+    C: CacheStore,
 {
     type Response = S::Response;
     type Error = anyhow::Error;
@@ -162,26 +160,26 @@ where
     ) -> std::task::Poll<Result<(), Self::Error>> {
         self.inner.poll_ready(cx).map_err(Into::into)
     }
-    fn call(&mut self, req: Request<Incoming>) -> Self::Future {
-        let Ok(key) = CacheKey::from_req(&req) else {
-            error!("couldnt create key from request for cache");
-            let fut = self.inner.call(req);
+    fn call(&mut self, req: Request<B>) -> Self::Future {
+        let Ok(key) = CacheKey::from_req(&req)
+            .inspect_err(|e| error!(%e, "couldnt create key from request for cache"))
+        else {
             return CacheResponseFuture::CacheMiss {
-                svc_fut: fut,
-                handle: None,
+                svc_fut: self.inner.call(req),
+                cache_handle: None,
                 svc_resp: None,
                 collect_fut: None,
             };
         };
 
         if let Some(resp) = self.cache.get(&key) {
-            debug!("retrieved response from cache");
+            debug!("cache hit!");
             return CacheResponseFuture::CacheHit { resp: Some(resp) };
         };
 
         CacheResponseFuture::CacheMiss {
             svc_fut: self.inner.call(req),
-            handle: Some((self.cache.clone(), key)),
+            cache_handle: Some((self.cache.clone(), key)),
             svc_resp: None,
             collect_fut: None,
         }
@@ -222,7 +220,7 @@ pin_project! {
         /// if there is no handle provided, we have to assume we cannot cache the response
         CacheMiss{
             #[pin] svc_fut: F,
-            handle: Option<(C, CacheKey)>,
+            cache_handle: Option<(C, CacheKey)>,
             svc_resp: Option<Response<Body>>,
             collect_fut: Option<BoxFut<Response<Body>, anyhow::Error>>
         },
@@ -232,11 +230,11 @@ pin_project! {
     }
 }
 
-impl<Fut, Err, Cache> Future for CacheResponseFuture<Fut, Cache>
+impl<F, E, C> Future for CacheResponseFuture<F, C>
 where
-    Fut: Future<Output = Result<Response<Body>, Err>>,
-    Err: Into<anyhow::Error> + std::error::Error,
-    Cache: CacheStore + Send + 'static,
+    F: Future<Output = Result<Response<Body>, E>> + Send + 'static,
+    E: Into<anyhow::Error>,
+    C: CacheStore,
 {
     type Output = Result<Response<Body>, anyhow::Error>;
 
@@ -252,7 +250,7 @@ where
             }
             EnumProj::CacheMiss {
                 mut svc_fut,
-                handle,
+                cache_handle,
                 svc_resp,
                 collect_fut,
             } => {
@@ -269,7 +267,7 @@ where
                     // did we call the service?
                     match svc_resp.take() {
                         // we called the service and we have a handle and key to cache the response
-                        Some(resp) if let Some((cache, key)) = handle.take() => {
+                        Some(resp) if let Some((cache, key)) = cache_handle.take() => {
                             let fut = cache.insert(key.clone(), resp);
                             *collect_fut = Some(fut);
                             return Poll::Pending;

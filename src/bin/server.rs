@@ -1,10 +1,7 @@
 use std::io::ErrorKind;
-use std::time::Duration;
 
 use anyhow::Result;
-use http_body_util::BodyExt;
-use hyper::body::Incoming;
-use hyper::{Request, Response, StatusCode};
+use hyper::Request;
 use hyper_util::rt::TokioExecutor;
 use hyper_util::server::conn::auto::Builder;
 use hyper_util::{rt::TokioIo, service::TowerToHyperService};
@@ -12,13 +9,10 @@ use std::time::Instant;
 use tap::Pipe;
 use tikv_jemallocator::Jemalloc;
 use tokio::select;
-use tower::util::BoxCloneService;
-use tower::{Service, ServiceBuilder, ServiceExt};
-use tower_http::{timeout::TimeoutLayer, trace::TraceLayer};
+use tower::ServiceExt;
 use tracing::{debug, error, info};
 
 use porto::config::*;
-use porto::services::upstream::*;
 use porto::setup::*;
 use porto::utils::*;
 
@@ -32,7 +26,7 @@ async fn main() -> Result<()> {
     let config = setup_config()?;
     let listener = setup_listener(&config);
     let tls_acceptor = setup_tls_from_file(&config)?;
-    let service = setup_service2(&config);
+    let service = porto::services::setup_service2(&config);
 
     let graceful = hyper_util::server::graceful::GracefulShutdown::new();
     let mut signal = std::pin::pin!(shutdown_signal());
@@ -99,42 +93,4 @@ async fn main() -> Result<()> {
         }
     }
     Ok(())
-}
-
-fn setup_service(config: &PortoConfig) -> HyperService {
-    let table = PeerTable::init(config);
-    info!("initialized domains {table}");
-
-    let service = ServiceBuilder::new()
-        .layer(TraceLayer::new_for_http())
-        .layer(TimeoutLayer::with_status_code(
-            StatusCode::REQUEST_TIMEOUT,
-            Duration::from_secs(20),
-        ));
-
-    service
-        .service(UpstreamService::new(table))
-        .map_response(|resp| resp.map(|body| body.boxed()))
-        .boxed_clone()
-}
-
-fn setup_service2(config: &PortoConfig) -> HyperService {
-    use porto::services::proxy::*;
-
-    let table = PeerTable::init(config);
-    info!("initialized domains {table}");
-
-    let middleware = ServiceBuilder::new()
-        .layer(TraceLayer::new_for_http())
-        .layer(TimeoutLayer::with_status_code(
-            StatusCode::REQUEST_TIMEOUT,
-            Duration::from_secs(20),
-        ));
-
-    let proxy = setup_proxy_service(table);
-
-    middleware
-        .service(proxy)
-        .map_response(|resp| resp.map(|body| body.boxed()))
-        .boxed_clone()
 }

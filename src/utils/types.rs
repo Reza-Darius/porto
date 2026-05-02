@@ -28,22 +28,11 @@ pub type HyperService = BoxCloneService<Request<Incoming>, Response<Body>, anyho
 /// monotonic counter for peer ids
 static ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-pub async fn is_tls(stream: &TcpStream) -> bool {
-    let mut peek_buf = [0u8; 1];
-    match stream.peek(&mut peek_buf).await {
-        // a https "client hello" starts with 0x16
-        Ok(1) => peek_buf[0] == 0x16,
-        _ => false,
-    }
-}
-
 /// maps domains to upstream addresses as either UDS or TCP connection
 #[derive(Debug, Clone, Default)]
 pub struct PeerTable {
     inner: Arc<PeerTableInner>,
 }
-
-impl PeerTable {}
 
 #[derive(Debug, Default)]
 struct PeerTableInner {
@@ -80,8 +69,8 @@ impl PeerTable {
         self.inner.domain_table.lock().insert(domain, id);
     }
 
-    pub fn get_peer_addr(&self, domain: &str) -> Option<PeerAddr> {
-        self.inner.domain_table.lock().get(domain).and_then(|id| {
+    pub fn get_peer_addr(&self, host: &str) -> Option<PeerAddr> {
+        self.inner.domain_table.lock().get(host).and_then(|id| {
             self.inner
                 .peer_table
                 .lock()
@@ -143,6 +132,7 @@ impl Display for PeerTable {
 // TODO: refactor this into a wrapper type
 
 #[derive(Debug, Clone, Deserialize)]
+#[serde(transparent)]
 pub struct PeerAddr {
     inner: Arc<PeerAddrInner>,
 }
@@ -265,5 +255,14 @@ impl AcmeToken {
 impl Borrow<str> for AcmeToken {
     fn borrow(&self) -> &str {
         self.as_str()
+    }
+}
+
+pub async fn is_tls(stream: &TcpStream) -> bool {
+    let mut peek_buf = [0u8; 1];
+    match stream.peek(&mut peek_buf).await {
+        // a https "client hello" starts with 0x16
+        Ok(1) => peek_buf[0] == 0x16,
+        _ => false,
     }
 }

@@ -4,6 +4,7 @@ use std::task::Poll;
 use std::time::Instant;
 
 use anyhow::anyhow;
+use http::{Uri, Version};
 use http_body_util::BodyExt;
 use hyper::body::Incoming;
 use hyper::client::conn::http1::SendRequest;
@@ -11,7 +12,9 @@ use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use pin_project_lite::pin_project;
 use tokio::net::{TcpStream, UnixStream};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::time::Duration;
+use tokio_util::sync::PollSemaphore;
 use tower::{Service, ServiceBuilder, ServiceExt};
 use tracing::{debug, error};
 
@@ -23,8 +26,8 @@ use crate::utils::*;
 
 pub fn setup_proxy_service(peers: PeerTable) -> HyperService {
     let connector = ServiceBuilder::new()
-        .concurrency_limit(10) // limits the amount of in-flight handshakes
-        .service(PeerConnector::new());
+        // .concurrency_limit(10) // limits the amount of in-flight handshakes
+        .service(PeerConnector::new(5));
 
     let cache = hyper_util::client::pool::cache::builder()
         .executor(TokioExecutor::new())
@@ -68,6 +71,8 @@ impl<Cache> PoolService<Cache> {
     }
 }
 
+// i apologize that you have to see this, i couldnt make this any other way because Cache from hyper is
+// not a namable type
 impl<Cache, Sender> Service<Request<Incoming>> for PoolService<Cache>
 where
     // the cache is a service which returns another impl service
@@ -112,15 +117,26 @@ where
                 return Ok(response(StatusCode::INTERNAL_SERVER_ERROR));
             };
 
-            sender.call(req).await.map_err(Into::into).or_else(|e| {
-                error!(%e, "sending failed");
-                Ok(response(StatusCode::INTERNAL_SERVER_ERROR))
-            })
+            sender
+                .ready()
+                .await
+                .map_err(Into::into)?
+                .call(req)
+                .await
+                .map_err(Into::into)
+                .or_else(|e| {
+                    error!(%e, "sending failed");
+                    Ok(response(StatusCode::INTERNAL_SERVER_ERROR))
+                })
         })
     }
 }
 
 /// rewrites the request and attaches PeerAddr for the connector
+///
+/// if this service fails, it will respond with Ok(http_response)
+///
+/// however, if the underlying service fails, it will propagate that error
 #[derive(Clone)]
 pub struct AddrService<S> {
     peers: PeerTable,
@@ -135,9 +151,10 @@ impl<S> AddrService<S> {
 
 impl<S, B> Service<Request<B>> for AddrService<S>
 where
-    S: Service<Request<B>, Response = Response<Body>>,
+    S: Service<Request<B>, Response = Response<Body>> + Send + 'static + Clone,
     B: hyper::body::Body,
     S::Error: Into<anyhow::Error>,
+    S::Future: Send + 'static,
 {
     type Response = S::Response;
     type Error = anyhow::Error;
@@ -151,8 +168,16 @@ where
     }
 
     fn call(&mut self, req: Request<B>) -> Self::Future {
+        let (mut parts, body) = req.into_parts();
+        let Some(path_and_query) = parts.uri.path_and_query() else {
+            debug!("no path found on request");
+            return AddrFuture::Error {
+                code: StatusCode::BAD_REQUEST,
+            };
+        };
+
         // get host name
-        let Ok(req_host) = get_target_host(&req) else {
+        let Some(req_host) = get_host(&parts) else {
             debug!("no host header found on request");
             return AddrFuture::Error {
                 code: StatusCode::BAD_REQUEST,
@@ -167,8 +192,27 @@ where
             };
         };
 
-        let uri = req.uri().clone();
-        let mut req = rewrite_request(req, uri);
+        // rewriting request
+
+        parts.headers.insert(
+            hyper::header::HOST,
+            hyper::header::HeaderValue::from_str(req_host).unwrap(),
+        );
+
+        if parts.version == Version::HTTP_2 {
+            parts.version = Version::HTTP_11;
+        }
+
+        parts.uri = Uri::builder()
+            .path_and_query(path_and_query.to_owned())
+            .build()
+            .unwrap();
+
+        debug!(?parts, "rewritten to response");
+
+        let mut req = Request::from_parts(parts, body);
+
+        adjust_header(&mut req);
         req.extensions_mut().insert(peer_addr);
 
         AddrFuture::Service {
@@ -205,33 +249,20 @@ where
 }
 
 /// thin service wrapper over a sender
-pub struct UpstreamSender {
+pub struct UpstreamSender<B> {
     pub last_used: Instant,
-    pub sender: SendRequest<Incoming>,
+    pub sender: SendRequest<B>,
+    _permit: OwnedSemaphorePermit,
+    con_id: u16,
 }
 
-pin_project! {
-    struct SenderFuture<F> {
-        #[pin]
-        inner: F,
+impl<B> Drop for UpstreamSender<B> {
+    fn drop(&mut self) {
+        debug!(id = self.con_id, "dropping sender");
     }
 }
 
-impl<F> Future for SenderFuture<F>
-where
-    F: Future<Output = Result<Response<Incoming>, hyper::Error>>,
-{
-    type Output = Result<Response<Body>, hyper::Error>;
-
-    fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
-        let this = self.project();
-        this.inner
-            .poll(cx)
-            .map(|res| res.map(|resp| resp.map(|b| b.boxed())))
-    }
-}
-
-impl Service<Request<Incoming>> for UpstreamSender {
+impl Service<Request<Incoming>> for UpstreamSender<Incoming> {
     type Response = Response<Body>;
     type Error = anyhow::Error;
     type Future = BoxFut<Self::Response, Self::Error>;
@@ -255,50 +286,71 @@ impl Service<Request<Incoming>> for UpstreamSender {
 }
 
 /// a service to establish a connection to a backend via UDS or TCP
-#[derive(Clone, Default, Debug)]
+#[derive(Debug)]
 pub struct PeerConnector {
     /// number of active connections
     n_connections: Arc<AtomicU16>,
+    semaphore: PollSemaphore,
+    permit: Option<OwnedSemaphorePermit>,
 }
 
+#[allow(clippy::new_without_default)]
 impl PeerConnector {
-    pub fn new() -> Self {
+    pub fn new(max_connections: usize) -> Self {
         PeerConnector {
             n_connections: Arc::new(0.into()),
+            semaphore: PollSemaphore::new(Arc::new(Semaphore::new(max_connections))),
+            permit: None,
+        }
+    }
+}
+
+// clone the connector without an acquired permit
+impl Clone for PeerConnector {
+    fn clone(&self) -> Self {
+        Self {
+            n_connections: self.n_connections.clone(),
+            semaphore: self.semaphore.clone(),
+            permit: None,
         }
     }
 }
 
 impl Service<PeerAddr> for PeerConnector {
-    type Response = UpstreamSender;
+    type Response = UpstreamSender<Incoming>;
     type Error = anyhow::Error;
     type Future = BoxFut<Self::Response, Self::Error>;
 
     fn poll_ready(
         &mut self,
-        _: &mut std::task::Context<'_>,
+        cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<std::result::Result<(), Self::Error>> {
-        std::task::Poll::Ready(Ok(()))
+        // If we haven't already acquired a permit from the semaphore, try to
+        // acquire one first.
+        if self.permit.is_none() {
+            self.permit = std::task::ready!(self.semaphore.poll_acquire(cx));
+            debug_assert!(self.permit.is_some(), "semaphore is never closed",);
+        }
+        Poll::Ready(Ok(()))
     }
 
     fn call(&mut self, req: PeerAddr) -> Self::Future {
+        // we take a permit and pack it into the sender
+        let permit = self
+            .permit
+            .take()
+            .expect("dont call this without calling poll ready first");
+
         let n_connections = self.n_connections.clone();
         Box::pin(async move {
             debug!(%req, "dialing new upstream connection");
 
-            let sender = match &*req {
+            let t = Instant::now();
+            match &*req {
                 PeerAddrInner::Ipv4(sock_addr) => {
-                    let t = Instant::now();
-
                     let stream = TokioIo::new(TcpStream::connect(sock_addr).await?);
                     let (sender, conn) = hyper::client::conn::http1::handshake(stream).await?;
-                    let n = n_connections.fetch_add(1, Ordering::Relaxed) + 1;
-
-                    debug!(
-                        n_con = n,
-                        elapsed_ms = t.elapsed().as_millis(),
-                        "TCP connection established"
-                    );
+                    let id = n_connections.fetch_add(1, Ordering::Relaxed) + 1;
 
                     tokio::spawn(async move {
                         if let Err(err) = conn.await {
@@ -307,20 +359,24 @@ impl Service<PeerAddr> for PeerConnector {
                         let n = n_connections.fetch_sub(1, Ordering::Relaxed) - 1;
                         debug!(n_con = n, "shutting down TCP connection");
                     });
-                    sender
-                }
-                PeerAddrInner::Uds(sock_addr) => {
-                    let t = Instant::now();
-
-                    let stream = TokioIo::new(UnixStream::connect(sock_addr).await?);
-                    let (sender, conn) = hyper::client::conn::http1::handshake(stream).await?;
-                    let n = n_connections.fetch_add(1, Ordering::Relaxed) + 1;
 
                     debug!(
-                        n_con = n,
+                        id = id,
                         elapsed_ms = t.elapsed().as_millis(),
-                        "UDS connection established"
+                        "TCP connection established"
                     );
+
+                    Ok(UpstreamSender {
+                        last_used: Instant::now(),
+                        sender,
+                        _permit: permit,
+                        con_id: id,
+                    })
+                }
+                PeerAddrInner::Uds(sock_addr) => {
+                    let stream = TokioIo::new(UnixStream::connect(sock_addr).await?);
+                    let (sender, conn) = hyper::client::conn::http1::handshake(stream).await?;
+                    let id = n_connections.fetch_add(1, Ordering::Relaxed) + 1;
 
                     tokio::spawn(async move {
                         if let Err(err) = conn.await {
@@ -329,13 +385,21 @@ impl Service<PeerAddr> for PeerConnector {
                         let n = n_connections.fetch_sub(1, Ordering::Relaxed) - 1;
                         debug!(n_con = n, "shutting down UDS connection");
                     });
-                    sender
+
+                    debug!(
+                        id = id,
+                        elapsed_ms = t.elapsed().as_millis(),
+                        "UDS connection established"
+                    );
+
+                    Ok(UpstreamSender {
+                        last_used: Instant::now(),
+                        sender,
+                        _permit: permit,
+                        con_id: id,
+                    })
                 }
-            };
-            Ok(UpstreamSender {
-                last_used: Instant::now(),
-                sender,
-            })
+            }
         })
     }
 }

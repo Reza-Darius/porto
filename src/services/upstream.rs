@@ -81,7 +81,7 @@ impl Service<Request<Incoming>> for UpstreamService {
 
         Box::pin(async move {
             // get host name
-            let Ok(req_host) = get_target_host(&req) else {
+            let Some(req_host) = get_target_host(&req) else {
                 debug!("no host header found on request");
                 return Ok(response(StatusCode::BAD_REQUEST));
             };
