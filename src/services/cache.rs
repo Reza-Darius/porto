@@ -5,11 +5,7 @@ use std::{borrow::Borrow, collections::HashMap, sync::Arc, task::Poll};
 use anyhow::{Result, anyhow};
 use derive_more::Display;
 use http_body_util::BodyExt;
-use hyper::{
-    Request, Response,
-    body::{Bytes, Incoming},
-    header::HOST,
-};
+use hyper::{Request, Response, body::Bytes, header::HOST};
 use parking_lot::Mutex;
 use pin_project_lite::pin_project;
 use tower::{Layer, Service};
@@ -43,12 +39,7 @@ impl CacheKey {
         // key = method + ":" + host + path + "?" + query
         key.push_str(req.method().as_str());
         key.push(':');
-        key.push_str(
-            header
-                .get(HOST)
-                .ok_or_else(|| anyhow!("no host header found"))?
-                .to_str()?,
-        );
+        key.push_str(get_target_host(req).ok_or_else(|| anyhow!("no host header found for key"))?);
         key.push_str(req.uri().path());
         key.push('?');
 
@@ -257,6 +248,7 @@ where
                 loop {
                     // we inserted into the cache, poll it until we get a response
                     if let Some(fut) = collect_fut.as_mut() {
+                        debug!("Future: polling body collect");
                         match fut.as_mut().poll(cx) {
                             Poll::Pending => return Poll::Pending,
                             Poll::Ready(Ok(resp)) => return Poll::Ready(Ok(resp)),
@@ -268,44 +260,27 @@ where
                     match svc_resp.take() {
                         // we called the service and we have a handle and key to cache the response
                         Some(resp) if let Some((cache, key)) = cache_handle.take() => {
+                            debug!("Future: inserting into cache");
                             let fut = cache.insert(key.clone(), resp);
                             *collect_fut = Some(fut);
-                            return Poll::Pending;
+                            continue;
                         }
                         // return without caching
                         Some(resp) => return Poll::Ready(Ok(resp)),
                         // call the service
-                        None => match svc_fut.as_mut().poll(cx) {
-                            Poll::Pending => return Poll::Pending,
-                            Poll::Ready(Err(e)) => return Poll::Ready(Err(e.into())),
-                            Poll::Ready(Ok(resp)) => {
-                                *svc_resp = Some(resp);
-                                continue; // we could alternatively return poll pending here
+                        None => {
+                            debug!("Future: polling service");
+                            match svc_fut.as_mut().poll(cx) {
+                                Poll::Pending => return Poll::Pending,
+                                Poll::Ready(Err(e)) => return Poll::Ready(Err(e.into())),
+                                Poll::Ready(Ok(resp)) => {
+                                    *svc_resp = Some(resp);
+                                    continue; // we could alternatively return poll pending here
+                                }
                             }
-                        },
+                        }
                     };
                 }
-
-                // if let Some(resp) = svc_resp.take() {
-                //     if let Some((cache, key)) = handle.take() {
-                //         let fut = cache.insert(key.clone(), resp);
-                //         *collect_fut = Some(fut);
-                //         return Poll::Pending;
-                //     } else {
-                //         // we dont cache and return immediately
-                //         return Poll::Ready(Ok(resp));
-                //     }
-                // }
-
-                // // poll the inner service
-                // match svc_fut.poll(cx) {
-                //     Poll::Pending => Poll::Pending,
-                //     Poll::Ready(Err(e)) => Poll::Ready(Err(e.into())),
-                //     Poll::Ready(Ok(resp)) => {
-                //         *svc_resp = Some(resp);
-                //         Poll::Pending // next poll will handle it
-                //     }
-                // }
             }
         }
     }
