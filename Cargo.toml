@@ -45,6 +45,9 @@ tokio-util = "0.7.18"
 http = "1.4.0"
 http-cache-semantics = "3.0.0"
 foyer = "0.22.3"
+axum = "0.8.9"
+axum-server = "0.8.0"
+
 
 [[bin]]
 name = "server"

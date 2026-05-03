@@ -3,6 +3,6 @@
 }
 testpeer.com:4000 {
 	bind 127.0.0.1
-	tls ../credentials/testpeer.com.pem ../credentials/testpeer.com-key.pem
+	tls ../../credentials/testpeer.com.pem ../../credentials/testpeer.com-key.pem
 	reverse_proxy 127.0.0.2:8000
 }

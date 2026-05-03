@@ -5,12 +5,12 @@ use anyhow::anyhow;
 #[derive(Debug)]
 pub struct Queue<T> {
     data: Vec<MaybeUninit<T>>,
-    // points to the slot for next element
-    head: usize,
-    // points to slot for next pop
-    tail: usize,
     len: u16,
     cap: u16,
+    /// points to the slot for next element
+    head: usize,
+    /// points to slot for next pop
+    tail: usize,
 }
 
 impl<T> Queue<T> {
@@ -25,10 +25,10 @@ impl<T> Queue<T> {
 
         Queue {
             data: v,
-            head: 0,
-            tail: 0,
             len: 0,
             cap: cap as u16,
+            head: 0,
+            tail: 0,
         }
     }
 

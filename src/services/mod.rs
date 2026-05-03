@@ -1,16 +1,17 @@
 use std::time::{Duration, Instant};
 
 use anyhow::anyhow;
+use http::{Request, Response};
 use http_body_util::BodyExt;
 use hyper::StatusCode;
-use tower::{ServiceBuilder, ServiceExt};
+use tower::{BoxError, Service, ServiceBuilder, ServiceExt, service_fn};
 use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer, trace::TraceLayer};
 use tracing::info;
 
 use crate::{
     config::PortoConfig,
     services::{addr::AddrServiceLayer, cache::ResponseCacheLayer},
-    utils::{HyperService, PeerTable},
+    utils::{Body, HyperService, PeerTable, response},
 };
 use proxy::*;
 
@@ -35,7 +36,6 @@ fn setup_service(config: &PortoConfig) -> HyperService {
     service
         .service(upstream::UpstreamService::new(table))
         .map_response(|resp| resp.map(|body| body.boxed()))
-        .map_err(|e| (*Box::new(e)).into())
         .boxed_clone()
 }
 
@@ -70,6 +70,34 @@ pub fn setup_service2(config: &PortoConfig) -> HyperService {
         }
     });
 
+    // wrapper service to call the connection pool
+    let con = service_fn(move |req: Request<_>| {
+        let mut pool = cache.clone();
+        async move {
+            let peer_addr = req
+                .extensions()
+                .get()
+                .cloned()
+                .ok_or_else(|| anyhow!("PeerAddr extension not found, req: {req:?}"))?;
+
+            let Ok(mut sender) = pool
+                .ready() // important to call ready here, otherwise the worker panics
+                .await?
+                .call(peer_addr) // call pool
+                .await
+                .inspect_err(|e| tracing::error!(%e, "couldnt get sender"))
+            else {
+                return Ok::<Response<Body>, BoxError>(response(StatusCode::INTERNAL_SERVER_ERROR));
+            };
+
+            sender.ready().await?.call(req).await.or_else(|e| {
+                tracing::error!(%e, "sending failed");
+                Ok(response(StatusCode::INTERNAL_SERVER_ERROR))
+            })
+        }
+    });
+
+    // building THE tower (tm)
     let tower = ServiceBuilder::new()
         .layer(TraceLayer::new_for_http())
         .layer(TimeoutLayer::with_status_code(
@@ -79,10 +107,11 @@ pub fn setup_service2(config: &PortoConfig) -> HyperService {
         .layer(CompressionLayer::new())
         .layer(AddrServiceLayer::new(table))
         .layer(ResponseCacheLayer::new())
-        .service(ConnectorPool::new(cache));
+        .service(con);
 
+    // erasing types
     tower
         .map_response(|resp| resp.map(|body| body.boxed()))
-        .map_err(|e| anyhow::Error::from_boxed(e))
+        .map_err(anyhow::Error::from_boxed)
         .boxed_clone()
 }
