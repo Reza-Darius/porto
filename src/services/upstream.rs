@@ -104,7 +104,7 @@ impl Service<Request<Incoming>> for UpstreamService {
                                 elapsed_ms = t.elapsed().as_millis(),
                                 "forwarded message time"
                             );
-                            Ok(resp.map(|b| b.boxed()))
+                            Ok(resp.map(|r| r.map_err(Into::into).boxed()))
                         }
                         Err(e) => {
                             error!(?e, "couldnt send request");
@@ -134,7 +134,7 @@ impl Service<Request<Incoming>> for UpstreamService {
                                 elapsed_ms = t.elapsed().as_millis(),
                                 "forwarded message time"
                             );
-                            Ok(resp.map(|b| b.boxed()))
+                            Ok(resp.map(|r| r.map_err(Into::into).boxed()))
                         }
                         Err(e) => {
                             error!(?e, "couldnt send request");

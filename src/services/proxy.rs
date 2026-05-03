@@ -121,7 +121,6 @@ where
                 .call(req)
                 .await
                 .map_err(Into::into)
-                .inspect(|resp| debug!(?resp, "response from backend"))
                 .or_else(|e| {
                     error!(%e, "sending failed");
                     Ok(response(StatusCode::INTERNAL_SERVER_ERROR))
@@ -163,8 +162,8 @@ impl Service<Request<Incoming>> for UpstreamSender<Incoming> {
         let f = self.sender.send_request(req);
         Box::pin(async move {
             let resp = f.await?;
-
-            Ok(resp.map(|b| b.boxed()))
+            debug!(?resp, "response from backend");
+            Ok(resp.map(|r| r.map_err(Into::into).boxed()))
         })
     }
 }

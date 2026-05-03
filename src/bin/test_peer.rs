@@ -55,15 +55,18 @@ async fn main() -> Result<()> {
 
 async fn echo(req: Request<Incoming>) -> Result<Response<Body>, anyhow::Error> {
     info!("received request: {req:?}");
-    match req.uri().path() {
+    let resp = match req.uri().path() {
         uri if uri.contains("cache") => Response::builder()
             .status(StatusCode::OK)
             .header(CACHE_CONTROL, "max-age=60")
             .body(req.into_body().boxed())
             .map_err(Into::into),
+
         _ => Response::builder()
             .status(StatusCode::OK)
             .body(req.into_body().boxed())
             .map_err(Into::into),
-    }
+    };
+    info!("replying with: {:?}", resp);
+    resp
 }

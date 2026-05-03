@@ -1,6 +1,6 @@
 #![allow(dead_code, clippy::new_without_default)]
 
-use std::{borrow::Borrow, collections::HashMap, sync::Arc, time::SystemTime};
+use std::{borrow::Borrow, sync::Arc, time::SystemTime};
 
 use anyhow::{Result, anyhow};
 use derive_more::Display;
@@ -48,7 +48,7 @@ where
          */
         let clone = self.inner.clone();
         // take the service that was ready
-        let mut inner = std::mem::replace(&mut self.inner, clone);
+        let mut svc = std::mem::replace(&mut self.inner, clone);
 
         Box::pin(async move {
             let Ok(key) = CacheKey::from_req(&req) else {
@@ -56,7 +56,7 @@ where
             };
 
             let (req_parts, req_body) = req.into_parts();
-            let e = store.inner.store.lock().get(&key);
+            let e = store.inner.store.get(&key);
 
             if let Some(entry) = e {
                 match entry.policy.before_request(&req_parts, SystemTime::now()) {
@@ -79,7 +79,7 @@ where
 
                         let new_req = Request::from_parts(request.clone(), req_body);
 
-                        let Ok(mut resp) = inner
+                        let Ok(mut resp) = svc
                             .call(new_req)
                             .await
                             .map_err(Into::into)
@@ -99,7 +99,7 @@ where
                         if new_policy.is_storable() {
                             if not_modified {
                                 // and reconstruct the response from our cached bits
-                                store.inner.store.lock().insert(
+                                store.inner.store.insert(
                                     key,
                                     StoreEntry {
                                         policy: new_policy,
@@ -112,7 +112,7 @@ where
                                 let (parts, body) = resp.into_parts();
                                 debug!(?parts, "updating full cache entry");
                                 let body = body.collect().await.unwrap().to_bytes();
-                                store.inner.store.lock().insert(
+                                store.inner.store.insert(
                                     key,
                                     StoreEntry {
                                         policy: new_policy,
@@ -130,7 +130,7 @@ where
                     }
                 };
             } else {
-                let Ok(mut resp) = inner
+                let Ok(mut resp) = svc
                     .call(Request::from_parts(req_parts.clone(), req_body))
                     .await
                 else {
@@ -142,7 +142,7 @@ where
                     debug!("inserting new cache entry");
                     let (resp_parts, resp_body) = resp.into_parts();
                     let body = resp_body.collect().await.unwrap().to_bytes();
-                    store.inner.store.lock().insert(
+                    store.inner.store.insert(
                         key,
                         StoreEntry {
                             policy: new_policy,
@@ -197,9 +197,7 @@ impl Store {
             }))
             .build();
         Store {
-            inner: Arc::new(StoreInner {
-                store: Mutex::new(cache),
-            }),
+            inner: Arc::new(StoreInner { store: cache }),
         }
     }
 }
@@ -212,7 +210,7 @@ struct StoreEntry {
 
 #[derive(Debug)]
 struct StoreInner {
-    store: Mutex<Cache<CacheKey, StoreEntry>>,
+    store: Cache<CacheKey, StoreEntry>,
 }
 
 #[derive(Debug, Clone, Display, Hash, Eq, PartialEq, PartialOrd, Ord)]

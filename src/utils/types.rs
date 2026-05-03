@@ -17,12 +17,13 @@ use hyper::{Request, Response};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;
+use tower::BoxError;
 use tower::util::BoxCloneService;
 
 use crate::config::PortoConfig;
 
 pub type BoxFut<R, E> = Pin<Box<dyn Future<Output = std::result::Result<R, E>> + Send>>;
-pub type Body = BoxBody<Bytes, hyper::Error>;
+pub type Body = BoxBody<Bytes, BoxError>;
 pub type HyperService = BoxCloneService<Request<Incoming>, Response<Body>, anyhow::Error>;
 
 /// monotonic counter for peer ids
@@ -37,7 +38,7 @@ pub struct PeerTable {
 #[derive(Debug, Default)]
 struct PeerTableInner {
     domain_table: Mutex<HashMap<Domain, PeerId>>,
-    peer_table: Mutex<HashMap<PeerId, Peer>>,
+    alive_peers: Mutex<HashMap<PeerId, Peer>>,
 }
 
 impl PeerTable {
@@ -52,10 +53,10 @@ impl PeerTable {
         let table = PeerTable {
             inner: Arc::new(PeerTableInner {
                 domain_table: Mutex::new(HashMap::new()),
-                peer_table: Mutex::new(HashMap::new()),
+                alive_peers: Mutex::new(HashMap::new()),
             }),
         };
-
+        // TODO: intializing backnds needs to move somewhere else
         for (domain, peer) in config.get_proxies() {
             table.register_peer(domain.clone(), peer.clone());
         }
@@ -65,14 +66,14 @@ impl PeerTable {
     pub fn register_peer(&self, domain: Domain, addr: PeerAddr) {
         let id = PeerId::new();
         let peer = Peer::new(addr);
-        self.inner.peer_table.lock().insert(id, peer);
+        self.inner.alive_peers.lock().insert(id, peer);
         self.inner.domain_table.lock().insert(domain, id);
     }
 
     pub fn get_peer_addr(&self, host: &str) -> Option<PeerAddr> {
         self.inner.domain_table.lock().get(host).and_then(|id| {
             self.inner
-                .peer_table
+                .alive_peers
                 .lock()
                 .get(id)
                 .map(|peer| peer.addr.clone())
@@ -85,7 +86,7 @@ impl PeerTable {
 }
 
 #[derive(Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
-struct PeerId(u64);
+pub struct PeerId(u64);
 
 impl PeerId {
     pub fn new() -> Self {

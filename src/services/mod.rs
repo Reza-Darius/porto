@@ -1,9 +1,10 @@
 use std::time::{Duration, Instant};
 
+use anyhow::anyhow;
 use http_body_util::BodyExt;
 use hyper::StatusCode;
 use tower::{ServiceBuilder, ServiceExt};
-use tower_http::{timeout::TimeoutLayer, trace::TraceLayer};
+use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer, trace::TraceLayer};
 use tracing::info;
 
 use crate::{
@@ -49,19 +50,17 @@ pub fn setup_service2(config: &PortoConfig) -> HyperService {
         .executor(hyper_util::rt::TokioExecutor::new())
         .build(connector);
 
-    let worker_clone = cache.clone();
+    let mut worker_clone = cache.clone();
 
     // background worker to time out idle connections
     tokio::spawn(async move {
-        let mut pool = worker_clone;
-
         let mut timeout_check = tokio::time::interval(Duration::from_secs(30));
         let idle_dur = Duration::from_secs(20);
 
         loop {
             timeout_check.tick().await;
             let now = Instant::now();
-            pool.retain(|sender| {
+            worker_clone.retain(|sender| {
                 if sender.sender.is_closed() {
                     return false;
                 }
@@ -76,6 +75,7 @@ pub fn setup_service2(config: &PortoConfig) -> HyperService {
             StatusCode::REQUEST_TIMEOUT,
             Duration::from_secs(20),
         ))
+        .layer(CompressionLayer::new())
         .layer(AddrServiceLayer::new(table))
         .layer(ResponseCacheLayer::new())
         .service(ConnectorPool::new(cache))

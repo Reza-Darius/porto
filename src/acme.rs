@@ -137,8 +137,8 @@ pub struct AcmeChallengeService {
 }
 
 impl AcmeChallengeService {
-    fn init(store: PortoTLS) -> Self {
-        tokio::spawn(acme_worker(store.clone(), AcmeWorkerMode::Debug));
+    fn init(store: PortoTLS, mode: AcmeWorkerMode) -> Self {
+        tokio::spawn(acme_worker(store.clone(), mode));
         AcmeChallengeService { store }
     }
 }
@@ -189,10 +189,11 @@ pub struct PortoTLS {
 #[derive(Debug)]
 struct PortoTLSInner {
     cred_path: PathBuf,
-    // table of registered domains in the proxy
+    /// table of registered domains in the proxy
     peers: PeerTable,
-    // in memory cache
+    /// in memory cache
     certs: Mutex<HashMap<Domain, (CertChainPem, KeyPem)>>,
+    /// tokens for ACME challenged
     pending_challenges: Mutex<HashMap<AcmeToken, KeyAuthorization>>,
 
     config: Arc<ServerConfig>,
@@ -239,7 +240,7 @@ impl PortoTLS {
         })
     }
 
-    /// check for expired certificates
+    /// check for expired certificates inside the in-memory cache
     fn check_certs(&self) -> Option<Vec<Domain>> {
         debug!("checking certs");
 
@@ -425,17 +426,17 @@ async fn acme_worker(store: PortoTLS, mode: AcmeWorkerMode) {
 
                 // TODO: some sort watcher channel for newly added domains when the server is running
 
-                if let Some(domains) = store.check_new_domains() {
-                    let _ = issue_order(store.clone(), &account, &domains)
-                        .await
-                        .inspect_err(|e| error!(%e, "ACME error"));
-                }
+                if let Some(domains) = store.check_new_domains()
+                    && let Err(e) = issue_order(store.clone(), &account, &domains).await
+                {
+                    error!(%e, "ACME error");
+                };
 
-                if let Some(domains) = store.check_certs() {
-                    let _ = issue_order(store.clone(), &account, &domains)
-                        .await
-                        .inspect_err(|e| error!(%e, "ACME error"));
-                }
+                if let Some(domains) = store.check_certs()
+                    && let Err(e) = issue_order(store.clone(), &account, &domains).await
+                {
+                    error!(%e, "ACME error");
+                };
             }
         }
     }
@@ -515,7 +516,7 @@ impl Resolver {
 impl server::ResolvesServerCert for Resolver {
     fn resolve(&self, client_hello: ClientHello<'_>) -> Option<Arc<sign::CertifiedKey>> {
         if let Some(name) = client_hello.server_name() {
-            debug!("resolving cert for {name}");
+            debug!("resolving cert for {name} in ClientHello");
             self.inner.lock().get(name).cloned()
         } else {
             // This kind of resolver requires SNI
@@ -551,6 +552,7 @@ mod tests {
             .init();
 
         let mut config = PortoConfig::default();
+        config.debug = true;
         config.credentials = Some(PathBuf::from("credentials"));
 
         let addr = "0.0.0.0:5002"; // port for pebble ACME server
@@ -559,7 +561,10 @@ mod tests {
 
         let listener = tokio::net::TcpListener::bind(addr).await?;
         let tls = PortoTLS::init(&config, domains).unwrap();
-        let service = TowerToHyperService::new(AcmeChallengeService::init(tls.clone()));
+        let service = TowerToHyperService::new(AcmeChallengeService::init(
+            tls.clone(),
+            AcmeWorkerMode::Debug,
+        ));
 
         info!("test ACME server listening on {addr}");
 

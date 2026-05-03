@@ -71,7 +71,7 @@ impl UpstreamClient {
                 match sender.send_request(req).await {
                     Ok(resp) => {
                         debug!(elapsed_ms = t.elapsed().as_millis(), "send request time");
-                        Ok(resp.map(|r| r.boxed()))
+                        Ok(resp.map(|r| r.map_err(Into::into).boxed()))
                     }
                     Err(e) => Err(anyhow!("failed to send upstream request: {e:?}")),
                 }

@@ -36,7 +36,8 @@ pub struct PortoConfig {
     pub credentials: Option<PathBuf>,
     proxy: Vec<Proxy>,
     #[serde(skip)]
-    service: ServiceConfig,
+    pub service: ServiceConfig,
+    pub debug: bool,
 }
 
 #[derive(Debug, Default)]
