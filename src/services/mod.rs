@@ -35,6 +35,7 @@ fn setup_service(config: &PortoConfig) -> HyperService {
     service
         .service(upstream::UpstreamService::new(table))
         .map_response(|resp| resp.map(|body| body.boxed()))
+        .map_err(|e| (*Box::new(e)).into())
         .boxed_clone()
 }
 
@@ -69,7 +70,7 @@ pub fn setup_service2(config: &PortoConfig) -> HyperService {
         }
     });
 
-    ServiceBuilder::new()
+    let tower = ServiceBuilder::new()
         .layer(TraceLayer::new_for_http())
         .layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,
@@ -78,7 +79,10 @@ pub fn setup_service2(config: &PortoConfig) -> HyperService {
         .layer(CompressionLayer::new())
         .layer(AddrServiceLayer::new(table))
         .layer(ResponseCacheLayer::new())
-        .service(ConnectorPool::new(cache))
+        .service(ConnectorPool::new(cache));
+
+    tower
         .map_response(|resp| resp.map(|body| body.boxed()))
+        .map_err(|e| anyhow::Error::from_boxed(e))
         .boxed_clone()
 }

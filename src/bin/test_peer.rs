@@ -59,12 +59,12 @@ async fn echo(req: Request<Incoming>) -> Result<Response<Body>, anyhow::Error> {
         uri if uri.contains("cache") => Response::builder()
             .status(StatusCode::OK)
             .header(CACHE_CONTROL, "max-age=60")
-            .body(req.into_body().boxed())
+            .body(req.into_body().map_err(Into::into).boxed())
             .map_err(Into::into),
 
         _ => Response::builder()
             .status(StatusCode::OK)
-            .body(req.into_body().boxed())
+            .body(req.into_body().map_err(Into::into).boxed())
             .map_err(Into::into),
     };
     info!("replying with: {:?}", resp);

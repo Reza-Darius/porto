@@ -13,48 +13,10 @@ use tokio::net::{TcpStream, UnixStream};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::time::Duration;
 use tokio_util::sync::PollSemaphore;
-use tower::{Service, ServiceBuilder, ServiceExt};
+use tower::{BoxError, Service, ServiceBuilder, ServiceExt};
 use tracing::{debug, error};
 
 use crate::utils::*;
-
-// pure mental illness following:
-
-// TODO: add some configuration, maybe a bulider
-
-pub fn setup_proxy_service() -> HyperService {
-    let connector = ServiceBuilder::new()
-        // .concurrency_limit(10) // limits the amount of in-flight handshakes
-        .service(PeerConnector::new(5));
-
-    let cache = hyper_util::client::pool::cache::builder()
-        .executor(TokioExecutor::new())
-        .build(connector);
-
-    let worker_clone = cache.clone();
-
-    // background worker to time out idle connections
-    tokio::spawn(async move {
-        let mut pool = worker_clone;
-
-        let mut timeout_check = tokio::time::interval(Duration::from_secs(30));
-        let idle_dur = Duration::from_secs(20);
-
-        loop {
-            timeout_check.tick().await;
-            let now = Instant::now();
-            pool.retain(|sender| {
-                if sender.sender.is_closed() {
-                    return false;
-                }
-                now < sender.last_used + idle_dur
-            });
-        }
-    });
-    ServiceBuilder::new()
-        .service(ConnectorPool::new(cache))
-        .boxed_clone()
-}
 
 /// wrapper around a connection pool
 #[derive(Clone)]
@@ -75,14 +37,14 @@ where
     // the cache is a service which returns another impl service
     Cache: Service<PeerAddr, Response = Sender> + Send + 'static + Clone,
     Cache::Future: Send + 'static,
-    Cache::Error: Into<anyhow::Error>,
+    Cache::Error: Into<BoxError>,
     // this is the sender the cache spits out, which itself is another server
     Sender: Service<Request<Incoming>, Response = Response<Body>> + Send + 'static,
     Sender::Future: Send + 'static,
-    Sender::Error: Into<anyhow::Error>,
+    Sender::Error: Into<BoxError>,
 {
     type Response = Response<Body>;
-    type Error = anyhow::Error;
+    type Error = BoxError;
     type Future = BoxFut<Self::Response, Self::Error>;
 
     fn poll_ready(
@@ -147,7 +109,7 @@ impl<B> Drop for UpstreamSender<B> {
 
 impl Service<Request<Incoming>> for UpstreamSender<Incoming> {
     type Response = Response<Body>;
-    type Error = anyhow::Error;
+    type Error = BoxError;
     type Future = BoxFut<Self::Response, Self::Error>;
 
     fn poll_ready(
@@ -201,7 +163,7 @@ impl Clone for PeerConnector {
 
 impl Service<PeerAddr> for PeerConnector {
     type Response = UpstreamSender<Incoming>;
-    type Error = anyhow::Error;
+    type Error = BoxError;
     type Future = BoxFut<Self::Response, Self::Error>;
 
     fn poll_ready(

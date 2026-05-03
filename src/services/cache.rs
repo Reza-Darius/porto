@@ -2,14 +2,12 @@
 
 use std::{borrow::Borrow, sync::Arc, time::SystemTime};
 
-use anyhow::{Result, anyhow};
 use derive_more::Display;
 use foyer::{Cache, CacheBuilder, EvictionConfig, LruConfig};
 use http_body_util::BodyExt;
 use http_cache_semantics::{AfterResponse, CachePolicy};
 use hyper::{Request, Response, body::Bytes};
-use parking_lot::Mutex;
-use tower::{Layer, Service};
+use tower::{BoxError, Layer, Service};
 use tracing::{debug, error};
 
 use crate::utils::*;
@@ -23,12 +21,12 @@ pub struct ResponseCache<S> {
 impl<S, B> Service<Request<B>> for ResponseCache<S>
 where
     S: Service<Request<B>, Response = Response<Body>> + Send + 'static + Clone,
-    S::Error: Into<anyhow::Error>,
+    S::Error: Into<BoxError>,
     S::Future: Send + 'static,
     B: hyper::body::Body + Send + Sync + 'static,
 {
     type Response = S::Response;
-    type Error = anyhow::Error;
+    type Error = BoxError;
     type Future = BoxFut<Self::Response, Self::Error>;
 
     fn poll_ready(
@@ -36,6 +34,7 @@ where
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Result<(), Self::Error>> {
         self.inner.poll_ready(cx).map_err(Into::into)
+        // .map_err(|e| anyhow::Error::from_boxed(e.into()))
     }
     #[allow(clippy::needless_return)]
     fn call(&mut self, req: Request<B>) -> Self::Future {
@@ -52,7 +51,8 @@ where
 
         Box::pin(async move {
             let Ok(key) = CacheKey::from_req(&req) else {
-                return Err(anyhow!("couldnt create cache key"));
+                let e = Box::new(CacheError::CantCreateKey);
+                return Err(e.into());
             };
 
             let (req_parts, req_body) = req.into_parts();
@@ -111,7 +111,7 @@ where
                             } else {
                                 let (parts, body) = resp.into_parts();
                                 debug!(?parts, "updating full cache entry");
-                                let body = body.collect().await.unwrap().to_bytes();
+                                let body = body.collect().await?.to_bytes();
                                 store.inner.store.insert(
                                     key,
                                     StoreEntry {
@@ -141,7 +141,7 @@ where
                 if new_policy.is_storable() {
                     debug!("inserting new cache entry");
                     let (resp_parts, resp_body) = resp.into_parts();
-                    let body = resp_body.collect().await.unwrap().to_bytes();
+                    let body = resp_body.collect().await?.to_bytes();
                     store.inner.store.insert(
                         key,
                         StoreEntry {
@@ -185,7 +185,7 @@ impl<S> Layer<S> for ResponseCacheLayer {
 }
 
 #[derive(Debug, Clone)]
-pub struct Store {
+struct Store {
     inner: Arc<StoreInner>,
 }
 
@@ -223,14 +223,14 @@ impl Borrow<str> for CacheKey {
 }
 
 impl CacheKey {
-    fn from_req<B>(req: &Request<B>) -> Result<Self> {
+    fn from_req<B>(req: &Request<B>) -> Result<Self, CacheError> {
         let mut key: String = String::new();
 
         // key = method + ":" + host + path + "?" + query
         key.push_str(req.method().as_str());
         key.push(':');
         // alternatively get PeerAddr from extension
-        key.push_str(get_target_host(req).ok_or_else(|| anyhow!("no host header found for key"))?);
+        key.push_str(get_target_host(req).ok_or_else(|| CacheError::CantCreateKey)?);
         key.push_str(req.uri().path());
 
         if let Some(query) = req.uri().query() {
@@ -241,4 +241,10 @@ impl CacheKey {
         debug!("new cache key: {key}");
         Ok(CacheKey(key))
     }
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum CacheError {
+    #[error("couldnt create key")]
+    CantCreateKey,
 }

@@ -3,7 +3,7 @@ use std::task::Poll;
 use http::{Uri, Version};
 use hyper::{Request, Response, StatusCode};
 use pin_project_lite::pin_project;
-use tower::Service;
+use tower::{BoxError, Service};
 use tracing::debug;
 
 use crate::utils::*;
@@ -30,13 +30,13 @@ impl<S> AddrService<S> {
 
 impl<S, B> Service<Request<B>> for AddrService<S>
 where
-    S: Service<Request<B>, Response = Response<Body>> + Send + 'static + Clone,
+    S: Service<Request<B>, Response = Response<Body>>,
     B: hyper::body::Body,
-    S::Error: Into<anyhow::Error>,
     S::Future: Send + 'static,
+    S::Error: Into<BoxError>,
 {
     type Response = S::Response;
-    type Error = anyhow::Error;
+    type Error = BoxError;
     type Future = AddrFuture<S::Future>;
 
     fn poll_ready(
@@ -112,9 +112,9 @@ pin_project! {
 impl<F, E> Future for AddrFuture<F>
 where
     F: Future<Output = Result<Response<Body>, E>>,
-    E: Into<anyhow::Error>,
+    E: Into<BoxError>,
 {
-    type Output = Result<Response<Body>, anyhow::Error>;
+    type Output = Result<Response<Body>, BoxError>;
 
     fn poll(
         self: std::pin::Pin<&mut Self>,
