@@ -1,5 +1,6 @@
 use std::borrow::Borrow;
 use std::collections::HashMap;
+use std::default;
 use std::fmt::Display;
 use std::ops::Deref;
 use std::path::PathBuf;
@@ -98,11 +99,23 @@ impl PeerId {
 struct Peer {
     addr: PeerAddr,
     alive: bool,
+    proto: PeerProto,
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum PeerProto {
+    #[default]
+    Http1,
+    Http2,
 }
 
 impl Peer {
     fn new(addr: PeerAddr) -> Self {
-        Peer { addr, alive: false }
+        Peer {
+            addr,
+            alive: false,
+            proto: PeerProto::Http1,
+        }
     }
 }
 
@@ -136,6 +149,17 @@ impl Display for PeerTable {
 #[serde(transparent)]
 pub struct PeerAddr {
     inner: Arc<PeerAddrInner>,
+}
+
+impl TryFrom<http::Uri> for PeerAddr {
+    type Error = anyhow::Error;
+
+    fn try_from(value: http::Uri) -> std::result::Result<Self, Self::Error> {
+        value
+            .authority()
+            .and_then(|host| PeerAddr::try_from(host.as_str()).ok())
+            .ok_or_else(|| anyhow!("couldnt convert URI to peeraddr {value:?}"))
+    }
 }
 
 impl Borrow<PeerAddrInner> for PeerAddr {

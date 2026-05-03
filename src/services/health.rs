@@ -1,11 +1,11 @@
 use std::collections::VecDeque;
 
 use crate::utils::*;
-use crate::{config::PortoConfig, services::proxy::PeerConnector, utils::*};
+use crate::{config::PortoConfig, services::proxy::Http1Connector, utils::*};
 
 #[derive(Clone)]
 pub struct HealthService {
-    connector: PeerConnector,
+    connector: Http1Connector,
     peers: PeerTable,
     alive_backends: Queue<PeerId>,
 }
@@ -13,7 +13,7 @@ pub struct HealthService {
 impl HealthService {
     pub fn new(peers: PeerTable) -> Self {
         HealthService {
-            connector: PeerConnector::new(1),
+            connector: Http1Connector::new(1),
             peers,
             alive_backends: Queue::new(100),
         }

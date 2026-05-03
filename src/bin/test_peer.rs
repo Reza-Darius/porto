@@ -10,7 +10,7 @@ use axum::{
 };
 use http::StatusCode;
 use http::header::CACHE_CONTROL;
-use hyper::{server::conn::http1, service::service_fn};
+use hyper::server::conn::http1;
 use hyper_util::{rt::TokioIo, service::TowerToHyperService};
 use porto::utils::{PeerAddr, PeerAddrInner, setup_tracing};
 use tracing::info;

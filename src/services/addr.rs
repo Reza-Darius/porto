@@ -1,7 +1,8 @@
-use std::task::Poll;
+use std::{str::FromStr, task::Poll};
 
-use http::{Uri, Version};
+use http::{Uri, Version, uri::Authority};
 use hyper::{Request, Response, StatusCode};
+use hyperlocal::Uri as UdsUri;
 use pin_project_lite::pin_project;
 use tower::{BoxError, Service};
 use tracing::debug;
@@ -73,20 +74,28 @@ where
         };
 
         // rewriting request
-
-        parts.headers.insert(
-            hyper::header::HOST,
-            hyper::header::HeaderValue::from_str(req_host).unwrap(),
-        );
-
         if parts.version == Version::HTTP_2 {
+            parts.headers.insert(
+                hyper::header::HOST,
+                hyper::header::HeaderValue::from_str(req_host).unwrap(),
+            );
             parts.version = Version::HTTP_11;
         }
 
-        parts.uri = Uri::builder()
-            .path_and_query(path_and_query.to_owned())
-            .build()
-            .unwrap();
+        parts.uri = match &*peer_addr {
+            PeerAddrInner::Uds(socket_addr) => {
+                UdsUri::new(socket_addr, path_and_query.as_str()).into()
+            }
+            PeerAddrInner::Ipv4(addr) => {
+                let authority: Authority = Authority::from_str(&addr.to_string()).unwrap();
+                Uri::builder()
+                    .scheme("http")
+                    .authority(authority)
+                    .path_and_query(path_and_query.to_owned())
+                    .build()
+                    .unwrap()
+            }
+        };
 
         debug!(?parts, "rewritten to response");
 

@@ -37,6 +37,7 @@ pub struct PortoConfig {
     proxy: Vec<Proxy>,
     #[serde(skip)]
     pub service: ServiceConfig,
+    #[serde(skip)]
     pub debug: bool,
 }
 

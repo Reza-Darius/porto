@@ -1,14 +1,18 @@
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::task::Poll;
 use std::time::Instant;
 
 use anyhow::anyhow;
+use futures::FutureExt;
 use http_body_util::BodyExt;
 use hyper::body::Incoming;
 use hyper::client::conn::http1::SendRequest;
+use hyper::client::conn::http2::SendRequest as SendRequest2;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::{TokioExecutor, TokioIo};
+use parking_lot::Mutex;
 use tokio::net::{TcpStream, UnixStream};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::time::Duration;
@@ -20,19 +24,19 @@ use crate::utils::*;
 
 /// wrapper around a connection pool
 #[derive(Clone)]
-pub struct ConnectorPool<Cache> {
+pub struct ProxyService<Cache> {
     pub pool: Cache,
 }
 
-impl<Cache> ConnectorPool<Cache> {
+impl<Cache> ProxyService<Cache> {
     pub fn new(pool: Cache) -> Self {
-        ConnectorPool { pool }
+        ProxyService { pool }
     }
 }
 
 // i apologize that you have to see this, i was unable to make this work any other way because hyper Cache
 // is not a namable type
-impl<Cache, Sender> Service<Request<Incoming>> for ConnectorPool<Cache>
+impl<Cache, Sender> Service<Request<Incoming>> for ProxyService<Cache>
 where
     // the cache is a service which returns another impl service
     Cache: Service<PeerAddr, Response = Sender> + Send + 'static + Clone,
@@ -94,20 +98,20 @@ where
 /// thin service wrapper over a sender
 ///
 /// this is whats being cached
-pub struct UpstreamSender<B> {
+pub struct Http1Sender<B> {
     pub last_used: Instant,
     pub sender: SendRequest<B>,
     _permit: OwnedSemaphorePermit,
     con_id: u16,
 }
 
-impl<B> Drop for UpstreamSender<B> {
+impl<B> Drop for Http1Sender<B> {
     fn drop(&mut self) {
         debug!(id = self.con_id, "dropping sender");
     }
 }
 
-impl Service<Request<Incoming>> for UpstreamSender<Incoming> {
+impl Service<Request<Incoming>> for Http1Sender<Incoming> {
     type Response = Response<Body>;
     type Error = BoxError;
     type Future = BoxFut<Self::Response, Self::Error>;
@@ -132,7 +136,7 @@ impl Service<Request<Incoming>> for UpstreamSender<Incoming> {
 
 /// a service to establish a connection to a backend via UDS or TCP
 #[derive(Debug)]
-pub struct PeerConnector {
+pub struct Http1Connector {
     /// number of active connections
     n_connections: Arc<AtomicU16>,
     semaphore: PollSemaphore,
@@ -140,9 +144,9 @@ pub struct PeerConnector {
 }
 
 #[allow(clippy::new_without_default)]
-impl PeerConnector {
+impl Http1Connector {
     pub fn new(max_connections: usize) -> Self {
-        PeerConnector {
+        Http1Connector {
             n_connections: Arc::new(0.into()),
             semaphore: PollSemaphore::new(Arc::new(Semaphore::new(max_connections))),
             permit: None,
@@ -151,7 +155,7 @@ impl PeerConnector {
 }
 
 // clone the connector without an acquired permit
-impl Clone for PeerConnector {
+impl Clone for Http1Connector {
     fn clone(&self) -> Self {
         Self {
             n_connections: self.n_connections.clone(),
@@ -161,8 +165,8 @@ impl Clone for PeerConnector {
     }
 }
 
-impl Service<PeerAddr> for PeerConnector {
-    type Response = UpstreamSender<Incoming>;
+impl Service<PeerAddr> for Http1Connector {
+    type Response = Http1Sender<Incoming>;
     type Error = BoxError;
     type Future = BoxFut<Self::Response, Self::Error>;
 
@@ -211,7 +215,7 @@ impl Service<PeerAddr> for PeerConnector {
                         "TCP connection established"
                     );
 
-                    Ok(UpstreamSender {
+                    Ok(Http1Sender {
                         last_used: Instant::now(),
                         sender,
                         _permit: permit,
@@ -237,10 +241,159 @@ impl Service<PeerAddr> for PeerConnector {
                         "UDS connection established"
                     );
 
-                    Ok(UpstreamSender {
+                    Ok(Http1Sender {
                         last_used: Instant::now(),
                         sender,
                         _permit: permit,
+                        con_id: id,
+                    })
+                }
+            }
+        })
+    }
+}
+
+/// thin service wrapper over a sender
+///
+/// this is whats being cached
+pub struct Http2Sender<B> {
+    pub last_used: Instant,
+    pub sender: SendRequest2<B>,
+    con_id: u16,
+}
+
+impl<B> Clone for Http2Sender<B> {
+    fn clone(&self) -> Self {
+        Self {
+            last_used: self.last_used,
+            sender: self.sender.clone(),
+            con_id: self.con_id,
+        }
+    }
+}
+
+impl<B> Drop for Http2Sender<B> {
+    fn drop(&mut self) {
+        debug!(id = self.con_id, "dropping sender");
+    }
+}
+
+impl Service<Request<Incoming>> for Http2Sender<Incoming> {
+    type Response = Response<Body>;
+    type Error = BoxError;
+    type Future = BoxFut<Self::Response, Self::Error>;
+
+    fn poll_ready(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::result::Result<(), Self::Error>> {
+        self.sender.poll_ready(cx).map_err(Into::into)
+    }
+
+    fn call(&mut self, req: Request<Incoming>) -> Self::Future {
+        self.last_used = Instant::now();
+        let f = self.sender.send_request(req);
+        Box::pin(async move {
+            let resp = f.await?;
+            debug!(?resp, "response from backend");
+            Ok(resp.map(|r| r.map_err(Into::into).boxed()))
+        })
+    }
+}
+
+/// a service to establish a connection to a backend via UDS or TCP
+#[derive(Debug)]
+pub struct Http2Connector {
+    /// number of active connections
+    n_connections: Arc<AtomicU16>,
+}
+
+#[allow(clippy::new_without_default)]
+impl Http2Connector {
+    pub fn new(max_connections: usize) -> Self {
+        Http2Connector {
+            n_connections: Arc::new(0.into()),
+        }
+    }
+}
+
+// clone the connector without an acquired permit
+impl Clone for Http2Connector {
+    fn clone(&self) -> Self {
+        Self {
+            n_connections: self.n_connections.clone(),
+        }
+    }
+}
+
+impl Service<PeerAddr> for Http2Connector {
+    type Response = Http2Sender<Incoming>;
+    type Error = BoxError;
+    type Future = BoxFut<Self::Response, Self::Error>;
+
+    fn poll_ready(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::result::Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, req: PeerAddr) -> Self::Future {
+        let n_connections = self.n_connections.clone();
+        Box::pin(async move {
+            debug!(%req, "dialing new upstream connection");
+
+            let t = Instant::now();
+            match &*req {
+                PeerAddrInner::Ipv4(sock_addr) => {
+                    let stream = TokioIo::new(TcpStream::connect(sock_addr).await?);
+                    let (sender, conn) =
+                        hyper::client::conn::http2::handshake(TokioExecutor::new(), stream).await?;
+                    let id = n_connections.fetch_add(1, Ordering::Relaxed) + 1;
+
+                    tokio::spawn(async move {
+                        if let Err(err) = conn.await {
+                            error!("TCP Connection failed: {err:#}");
+                        }
+                        let n = n_connections.fetch_sub(1, Ordering::Relaxed) - 1;
+                        debug!(n_con = n, "shutting down TCP connection");
+                    });
+
+                    debug!(
+                        id = id,
+                        elapsed_ms = t.elapsed().as_millis(),
+                        "TCP connection established"
+                    );
+
+                    Ok(Http2Sender {
+                        last_used: Instant::now(),
+                        sender,
+                        con_id: id,
+                    })
+                }
+                PeerAddrInner::Uds(sock_addr) => {
+                    let stream = TokioIo::new(UnixStream::connect(sock_addr).await?);
+                    let (sender, conn) =
+                        hyper::client::conn::http2::handshake(TokioExecutor::new(), stream).await?;
+                    let id = n_connections.fetch_add(1, Ordering::Relaxed) + 1;
+
+                    tokio::spawn(async move {
+                        if let Err(err) = conn.await {
+                            error!("UDS Connection failed: {err:#}");
+                        }
+                        let n = n_connections.fetch_sub(1, Ordering::Relaxed) - 1;
+                        debug!(n_con = n, "shutting down UDS connection");
+                    });
+
+                    debug!(
+                        id = id,
+                        elapsed_ms = t.elapsed().as_millis(),
+                        "UDS connection established"
+                    );
+
+                    Ok(Http2Sender {
+                        last_used: Instant::now(),
+                        sender,
                         con_id: id,
                     })
                 }

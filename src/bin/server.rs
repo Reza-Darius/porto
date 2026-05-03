@@ -30,7 +30,7 @@ async fn main() -> Result<()> {
     let config = setup_config()?;
     let listener = setup_listener(&config);
     let tls_acceptor = setup_tls_from_file(&config)?;
-    let service = porto::services::setup_service2(&config);
+    let service = porto::services::setup_service(&config);
 
     let graceful = hyper_util::server::graceful::GracefulShutdown::new();
     let mut signal = std::pin::pin!(shutdown_signal());

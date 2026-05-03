@@ -1,5 +1,6 @@
 use std::future::{Ready, ready};
 use std::net::SocketAddr;
+use std::task::ready;
 
 use addr::domain;
 use anyhow::{Result, anyhow};
@@ -16,9 +17,10 @@ use hyperlocal::Uri as UdsUri;
 use pin_project_lite::pin_project;
 use tokio::net::{TcpStream, UnixStream};
 use tokio::time::Instant;
-use tower::Service;
+use tower::{BoxError, Service};
 use tracing::{debug, error};
 
+use crate::services::connector::UpstreamConnector;
 use crate::utils::*;
 
 /*
@@ -44,28 +46,32 @@ pub fn setup_tcp_client(domains: PeerTable) -> Client<HttpConnector<UpstreamReso
         .build(connector)
 }
 
+pub fn setup_client() -> Client<UpstreamConnector, Incoming> {
+    Client::builder(hyper_util::rt::TokioExecutor::new())
+        .pool_idle_timeout(std::time::Duration::from_secs(30))
+        .pool_timer(TokioTimer::new())
+        .pool_max_idle_per_host(40)
+        .build(UpstreamConnector::new())
+}
+
 #[derive(Debug, Clone)]
 pub struct UpstreamService {
-    uds_client: Client<UnixConnector, Incoming>,
-    tcp_client: Client<HttpConnector<UpstreamResolver>, Incoming>,
-    table: PeerTable,
+    client: Client<UpstreamConnector, Incoming>,
 }
 
 impl UpstreamService {
-    pub fn new(domains: PeerTable) -> Self {
+    pub fn new() -> Self {
         debug!("new upstream service");
         Self {
-            table: domains.clone(),
-            uds_client: setup_uds_client(),
-            tcp_client: setup_tcp_client(domains),
+            client: setup_client(),
         }
     }
 }
 
 impl Service<Request<Incoming>> for UpstreamService {
     type Response = Response<Body>;
-    type Error = anyhow::Error;
-    type Future = BoxFut<Self::Response, Self::Error>;
+    type Error = BoxError;
+    type Future = UpstreamResponseFuture;
 
     fn poll_ready(
         &mut self,
@@ -75,77 +81,48 @@ impl Service<Request<Incoming>> for UpstreamService {
     }
 
     fn call(&mut self, req: Request<Incoming>) -> Self::Future {
-        let table = self.table.clone();
-        let uds_client = self.uds_client.clone();
-        let tcp_client = self.tcp_client.clone();
+        let client = self.client.clone();
 
-        Box::pin(async move {
-            // get host name
-            let Some(req_host) = get_target_host(&req) else {
-                debug!("no host header found on request");
-                return Ok(response(StatusCode::BAD_REQUEST));
-            };
-
-            // get associated socket name
-            let Some(peer_addr) = table.get_peer_addr(req_host) else {
-                debug!(requested_host = %req_host, "coulndnt retrieve socket name");
-                return Ok(response(StatusCode::NOT_FOUND));
-            };
-
-            match &*peer_addr {
-                PeerAddrInner::Uds(socket_addr) => {
-                    let upstream_uri = UdsUri::new(socket_addr, req.uri().path()).into();
-                    let req = rewrite_request(req, upstream_uri);
-
-                    let t = Instant::now();
-                    match uds_client.request(req).await {
-                        Ok(resp) => {
-                            debug!(
-                                elapsed_ms = t.elapsed().as_millis(),
-                                "forwarded message time"
-                            );
-                            Ok(resp.map(|r| r.map_err(Into::into).boxed()))
-                        }
-                        Err(e) => {
-                            error!(?e, "couldnt send request");
-                            Ok(response(StatusCode::INTERNAL_SERVER_ERROR))
-                        }
-                    }
-                }
-                PeerAddrInner::Ipv4(_) => {
-                    let mut parts = req.uri().clone().into_parts();
-                    debug!(?parts, "request parts");
-                    parts.scheme = Some("http".parse().expect("its hardcoded"));
-
-                    // we either trim the URI to not include a port, or use the HOST field
-                    parts.authority = parts
-                        .authority
-                        .map(|auth| strip_port(auth.as_str()).parse().unwrap())
-                        .or_else(|| Some(req_host.parse().unwrap()));
-
-                    let upstream_uri = Uri::from_parts(parts).unwrap();
-
-                    let req = rewrite_request(req, upstream_uri);
-
-                    let t = Instant::now();
-                    match tcp_client.request(req).await {
-                        Ok(resp) => {
-                            debug!(
-                                elapsed_ms = t.elapsed().as_millis(),
-                                "forwarded message time"
-                            );
-                            Ok(resp.map(|r| r.map_err(Into::into).boxed()))
-                        }
-                        Err(e) => {
-                            error!(?e, "couldnt send request");
-                            Ok(response(StatusCode::INTERNAL_SERVER_ERROR))
-                        }
-                    }
-                }
-            }
-        })
+        UpstreamResponseFuture {
+            f: client.request(req),
+        }
     }
 }
+
+pin_project! {
+    pub struct UpstreamResponseFuture {
+        #[pin]
+        f: ResponseFuture
+    }
+}
+
+impl Future for UpstreamResponseFuture {
+    type Output = Result<Response<Body>, BoxError>;
+
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        let this = self.project();
+
+        let t = Instant::now();
+        let r = match ready!(this.f.poll(cx)) {
+            Ok(resp) => {
+                debug!(
+                    elapsed_ms = t.elapsed().as_millis(),
+                    "forwarded message time"
+                );
+                Ok(resp.map(|r| r.map_err(Into::into).boxed()))
+            }
+            Err(e) => {
+                error!(?e, "couldnt send request");
+                Ok(response(StatusCode::INTERNAL_SERVER_ERROR))
+            }
+        };
+        std::task::Poll::Ready(r)
+    }
+}
+
 pin_project! {
     struct UpstreamFuture {
         #[pin]
