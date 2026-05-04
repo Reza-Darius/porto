@@ -1,6 +1,6 @@
+#![allow(clippy::new_without_default)]
 use std::borrow::Borrow;
 use std::collections::HashMap;
-use std::default;
 use std::fmt::Display;
 use std::ops::Deref;
 use std::path::PathBuf;
@@ -41,6 +41,8 @@ struct PeerTableInner {
     domain_table: Mutex<HashMap<Domain, PeerId>>,
     alive_peers: Mutex<HashMap<PeerId, Peer>>,
 }
+
+// TODO: prevent duplicate addresses
 
 impl PeerTable {
     fn new() -> Self {
@@ -95,14 +97,16 @@ impl PeerId {
     }
 }
 
+/// a backend peer to upstream requests to
 #[derive(Debug)]
 struct Peer {
     addr: PeerAddr,
     alive: bool,
-    proto: PeerProto,
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Default)]
+/// the HTTP protocol supported by the backend
+#[derive(Debug, Clone, Copy, Deserialize, Hash, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[serde(untagged)]
 pub enum PeerProto {
     #[default]
     Http1,
@@ -111,11 +115,7 @@ pub enum PeerProto {
 
 impl Peer {
     fn new(addr: PeerAddr) -> Self {
-        Peer {
-            addr,
-            alive: false,
-            proto: PeerProto::Http1,
-        }
+        Peer { addr, alive: false }
     }
 }
 
@@ -145,10 +145,23 @@ impl Display for PeerTable {
 }
 // TODO: refactor this into a wrapper type
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(transparent)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PeerAddr {
+    pub prot: PeerProto,
     inner: Arc<PeerAddrInner>,
+}
+
+impl<'de> Deserialize<'de> for PeerAddr {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let inner = PeerAddrInner::deserialize(deserializer)?;
+        Ok(PeerAddr {
+            inner: Arc::new(inner),
+            prot: PeerProto::Http1,
+        })
+    }
 }
 
 impl TryFrom<http::Uri> for PeerAddr {
@@ -176,7 +189,7 @@ impl Deref for PeerAddr {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Hash, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(untagged)]
 pub enum PeerAddrInner {
     Ipv4(std::net::SocketAddr),
@@ -194,6 +207,7 @@ impl TryFrom<&str> for PeerAddr {
 
         Ok(PeerAddr {
             inner: Arc::new(inner),
+            prot: PeerProto::Http1,
         })
     }
 }

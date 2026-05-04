@@ -100,7 +100,7 @@ impl tower::Service<Uri> for UpstreamConnector {
     }
 
     fn call(&mut self, uri: Uri) -> Self::Future {
-        let f = async move {
+        Box::pin(async move {
             let addr = PeerAddr::try_from(uri).map_err(|e| {
                 error!(%e, "connector error");
                 std::io::Error::new(std::io::ErrorKind::InvalidInput, e)
@@ -120,7 +120,38 @@ impl tower::Service<Uri> for UpstreamConnector {
                     Ok(TokioIo::new(Upstream::Uds { s: stream }))
                 }
             }
-        };
-        Box::pin(f)
+        })
+    }
+}
+
+impl tower::Service<PeerAddr> for UpstreamConnector {
+    type Response = Upstream;
+    type Error = std::io::Error;
+    // We can't "name" an `async` generated future.
+    type Future =
+        std::pin::Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+    fn poll_ready(&mut self, _: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
+        // This connector is always ready, but others might not be.
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, addr: PeerAddr) -> Self::Future {
+        Box::pin(async move {
+            match &*addr {
+                crate::utils::PeerAddrInner::Ipv4(socket_addr) => {
+                    let stream = TcpStream::connect(socket_addr)
+                        .await
+                        .inspect_err(|e| error!(%e, %addr, "tcp connect error"))?;
+                    Ok(Upstream::Tcp { s: stream })
+                }
+                crate::utils::PeerAddrInner::Uds(path_buf) => {
+                    let stream = UnixStream::connect(path_buf)
+                        .await
+                        .inspect_err(|e| error!(%e, %addr, "uds connect error"))?;
+                    Ok(Upstream::Uds { s: stream })
+                }
+            }
+        })
     }
 }

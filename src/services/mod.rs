@@ -1,4 +1,7 @@
-use std::time::{Duration, Instant};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
 use anyhow::anyhow;
 use http::{Request, Response};
@@ -10,7 +13,7 @@ use hyper::{
     client::conn::http2::{SendRequest as SendRequest2, handshake as handshake2},
 };
 use hyper_util::{
-    client::pool::singleton::Singleton,
+    client::pool::{map::Map, negotiate::builder, singleton::Singleton},
     rt::{TokioExecutor, TokioIo},
 };
 use tokio::net::{TcpStream, UnixStream};
@@ -20,7 +23,9 @@ use tracing::info;
 
 use crate::{
     config::PortoConfig,
-    services::{addr::AddrServiceLayer, cache::ResponseCacheLayer},
+    services::{
+        addr::AddrServiceLayer, cache::ResponseCacheLayer, connection_table::ConnectionService,
+    },
     utils::{Body, HyperService, PeerAddr, PeerTable, response},
 };
 use connector::*;
@@ -28,6 +33,7 @@ use proxy::*;
 
 mod addr;
 mod cache;
+mod connection_table;
 mod connector;
 mod health;
 mod proxy;
@@ -55,86 +61,87 @@ pub fn setup_service(config: &PortoConfig) -> HyperService {
         .boxed_clone()
 }
 
-pub fn setup_service2(config: &PortoConfig) -> HyperService {
-    let table = PeerTable::init(config);
-    info!("initialized domains {table}");
+// pub fn setup_service2(config: &PortoConfig) -> HyperService {
+//     let table = PeerTable::init(config);
+//     info!("initialized domains {table}");
 
-    let http1con = ServiceBuilder::new()
-        .concurrency_limit(10) // limits the amount of in-flight handshakes
-        .service(Http1Connector::new(32));
+//     let http1con = ServiceBuilder::new()
+//         .concurrency_limit(10) // limits the amount of in-flight handshakes
+//         .service(Http1Connector::new(32));
 
-    let http1_cache = hyper_util::client::pool::cache::builder()
-        .executor(hyper_util::rt::TokioExecutor::new())
-        .build(http1con);
+//     let http1_cache = hyper_util::client::pool::cache::builder()
+//         .executor(hyper_util::rt::TokioExecutor::new())
+//         .build(http1con);
 
-    let mut worker_clone = http1_cache.clone();
+//     let mut worker_clone = http1_cache.clone();
 
-    // background worker to time out idle connections
-    tokio::spawn(async move {
-        let mut timeout_check = tokio::time::interval(Duration::from_secs(30));
-        let idle_dur = Duration::from_secs(20);
+//     // background worker to time out idle connections
+//     tokio::spawn(async move {
+//         let mut timeout_check = tokio::time::interval(Duration::from_secs(30));
+//         let idle_dur = Duration::from_secs(20);
 
-        loop {
-            timeout_check.tick().await;
-            let now = Instant::now();
-            worker_clone.retain(|sender| {
-                if sender.sender.is_closed() {
-                    return false;
-                }
-                now < sender.last_used + idle_dur
-            });
-        }
-    });
+//         loop {
+//             timeout_check.tick().await;
+//             let now = Instant::now();
+//             worker_clone.retain(|sender| {
+//                 if sender.sender.is_closed() {
+//                     return false;
+//                 }
+//                 now < sender.last_used + idle_dur
+//             });
+//         }
+//     });
 
-    // wrapper service to call the connection pool
-    let con = service_fn(move |req: Request<_>| {
-        let mut pool = http1_cache.clone();
-        async move {
-            let peer_addr = req
-                .extensions()
-                .get()
-                .cloned()
-                .ok_or_else(|| anyhow!("PeerAddr extension not found, req: {req:?}"))?;
+//     // wrapper service to call the connection pool
+//     let http1con = service_fn(move |req: Request<_>| {
+//         let mut http1_cache = http1_cache.clone();
+//         async move {
+//             let peer_addr = req
+//                 .extensions()
+//                 .get()
+//                 .cloned()
+//                 .ok_or_else(|| anyhow!("PeerAddr extension not found, req: {req:?}"))?;
 
-            let Ok(mut sender) = pool
-                .ready() // important to call ready here, otherwise the worker panics
-                .await?
-                .call(peer_addr) // call pool
-                .await
-                .inspect_err(|e| tracing::error!(%e, "couldnt get sender"))
-            else {
-                return Ok::<Response<Body>, BoxError>(response(StatusCode::INTERNAL_SERVER_ERROR));
-            };
+//             // implement a hashmap with connections here
+//             let Ok(mut sender) = http1_cache
+//                 .ready() // important to call ready here, otherwise the worker panics
+//                 .await?
+//                 .call(peer_addr) // call pool
+//                 .await
+//                 .inspect_err(|e| tracing::error!(%e, "couldnt get sender"))
+//             else {
+//                 return Ok::<Response<Body>, BoxError>(response(StatusCode::INTERNAL_SERVER_ERROR));
+//             };
 
-            sender.ready().await?.call(req).await.or_else(|e| {
-                tracing::error!(%e, "sending failed");
-                Ok(response(StatusCode::INTERNAL_SERVER_ERROR))
-            })
-        }
-    });
+//             sender.ready().await?.call(req).await.or_else(|e| {
+//                 tracing::error!(%e, "sending failed");
+//                 Ok(response(StatusCode::INTERNAL_SERVER_ERROR))
+//             })
+//         }
+//     });
 
-    // building THE tower (tm)
-    let tower = ServiceBuilder::new()
-        .layer(TraceLayer::new_for_http())
-        .layer(TimeoutLayer::with_status_code(
-            StatusCode::REQUEST_TIMEOUT,
-            Duration::from_secs(20),
-        ))
-        .layer(CompressionLayer::new().gzip(true))
-        .layer(AddrServiceLayer::new(table))
-        .layer(ResponseCacheLayer::new())
-        .service(con);
+//     // building THE tower (tm)
+//     let tower = ServiceBuilder::new()
+//         .layer(TraceLayer::new_for_http())
+//         .layer(TimeoutLayer::with_status_code(
+//             StatusCode::REQUEST_TIMEOUT,
+//             Duration::from_secs(20),
+//         ))
+//         .layer(CompressionLayer::new().gzip(true))
+//         .layer(AddrServiceLayer::new(table))
+//         .layer(ResponseCacheLayer::new())
+//         .service(http1con);
 
-    // erasing types
-    tower
-        .map_response(|resp| resp.map(|body| body.boxed()))
-        .map_response(|resp| {
-            info!("response {resp:?}");
-            resp
-        })
-        .map_err(anyhow::Error::from_boxed)
-        .boxed_clone()
-}
+//     // erasing types
+//     tower
+//         .map_response(|resp| resp.map(|body| body.boxed()))
+//         .map_response(|resp| {
+//             info!("response {resp:?}");
+//             resp
+//         })
+//         .map_err(anyhow::Error::from_boxed)
+//         .boxed_clone()
+// }
 
 // pub fn setup_service3(config: &PortoConfig) -> HyperService {
 //     let table = PeerTable::init(config);
@@ -183,28 +190,43 @@ pub fn setup_service2(config: &PortoConfig) -> HyperService {
 //         Ok::<SendRequest2<Incoming>, BoxError>(sender)
 //     });
 
+//     // let http1con = ServiceBuilder::new()
+//     //     .concurrency_limit(10) // limits the amount of in-flight handshakes
+//     //     // .service(http1);
+//     //     .service(service_fn(move |addr: PeerAddr| async move {
+//     //         let upstream = con.clone().call(addr).await.unwrap();
+//     //         let sender = http1.clone().call(upstream).await.unwrap();
+//     //         Ok::<SendRequest1<Incoming>, BoxError>(sender)
+//     //     }));
+
 //     let http1con = ServiceBuilder::new()
 //         .concurrency_limit(10) // limits the amount of in-flight handshakes
 //         .service(http1);
 
-//     let http1_cache = hyper_util::client::pool::cache::builder()
+//     let http1con = hyper_util::client::pool::cache::builder()
 //         .executor(hyper_util::rt::TokioExecutor::new())
 //         .build(http1con);
 
 //     let http2con = Singleton::new(http2);
 
-//     let pool_layer = layer_fn(move |svc| {
+//     // let http2con = Singleton::new(service_fn(move |addr: PeerAddr| async move {
+//     //     let upstream = con.clone().call(addr).await.unwrap();
+//     //     let sender = http2.clone().call(upstream).await.unwrap();
+//     //     Ok::<SendRequest2<Incoming>, BoxError>(sender)
+//     // }));
+
+//     let pool_layer = layer_fn(|svc| {
 //         hyper_util::client::pool::negotiate::builder()
 //             .connect(svc)
-//             .fallback(http1_cache.clone())
-//             .upgrade(http2.clone())
-//             .inspect(|con| con)
+//             .fallback(http1con.clone())
+//             .upgrade(http2con.clone())
+//             .inspect(|con| true)
 //             .build()
 //     });
 
 //     let pool_map = hyper_util::client::pool::map::Map::builder()
-//         .keys(|dst| todo!())
-//         .values(move |dst| pool_layer.layer(con.clone()))
+//         .keys(|dst: &Request<Incoming>| dst.extensions().get::<PeerAddr>().cloned().unwrap())
+//         .values(move |_dst| pool_layer.layer(con.clone()))
 //         .build();
 
 //     // // background worker to time out idle connections
@@ -247,3 +269,30 @@ pub fn setup_service2(config: &PortoConfig) -> HyperService {
 //     //     .boxed_clone()
 //     todo!()
 // }
+
+pub fn setup_service4(config: &PortoConfig) -> HyperService {
+    let table = PeerTable::init(config);
+    info!("initialized domains {table}");
+
+    // building THE tower (tm)
+    let tower = ServiceBuilder::new()
+        .layer(TraceLayer::new_for_http())
+        .layer(TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            Duration::from_secs(20),
+        ))
+        .layer(CompressionLayer::new().gzip(true))
+        .layer(AddrServiceLayer::new(table))
+        .layer(ResponseCacheLayer::new())
+        .service(ConnectionService::new());
+
+    // erasing types
+    tower
+        .map_response(|resp| resp.map(|body| body.boxed()))
+        .map_response(|resp| {
+            info!("response {resp:?}");
+            resp
+        })
+        .map_err(anyhow::Error::from_boxed)
+        .boxed_clone()
+}
