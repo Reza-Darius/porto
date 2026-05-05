@@ -72,9 +72,9 @@ where
                         request.extensions.insert(
                             req_parts
                                 .extensions
-                                .get::<PeerAddr>()
+                                .get::<Peer>()
                                 .cloned()
-                                .expect("this cant fail, unless the addr layer isnt called"),
+                                .expect("Addr service needs to be called first"),
                         );
 
                         let new_req = Request::from_parts(request.clone(), req_body);

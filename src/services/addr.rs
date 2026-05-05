@@ -51,6 +51,7 @@ where
     #[tracing::instrument(skip_all)]
     fn call(&mut self, req: Request<B>) -> Self::Future {
         let (mut parts, body) = req.into_parts();
+        debug!(?parts, "rewriting request");
 
         let Some(req_host) = get_host(&parts) else {
             debug!("no host header found on request");
@@ -59,24 +60,15 @@ where
             };
         };
 
-        let Some(peer_addr) = self.table.get_peer_addr(req_host) else {
+        let Some(peer) = self.table.get_peer(req_host) else {
             debug!(requested_host = %req_host, "coulndnt retrieve socket name");
             return AddrFuture::Error {
                 code: StatusCode::NOT_FOUND,
             };
         };
 
-        // rewriting request
-        if parts.version == Version::HTTP_2 {
-            parts.headers.insert(
-                hyper::header::HOST,
-                hyper::header::HeaderValue::from_str(req_host).unwrap(),
-            );
-            parts.version = Version::HTTP_11;
-        }
-
         // rewrite URI
-        parts.uri = match uri_absolute(&parts, &peer_addr) {
+        parts.uri = match uri_absolute(&parts, &peer.addr) {
             Ok(uri) => uri,
             Err(e) => {
                 tracing::error!(%e, "couldnt create absolute uri");
@@ -86,12 +78,14 @@ where
             }
         };
 
-        debug!(peer_addr= %peer_addr, ?parts, "rewritten to response");
+        debug!(peer_addr= %peer.addr, ?parts, "rewritten to response");
 
         let mut req = Request::from_parts(parts, body);
 
         insert_forward_header(&mut req);
-        req.extensions_mut().insert(peer_addr);
+
+        // we embed the peer in the request for subsequent services
+        req.extensions_mut().insert(peer);
 
         AddrFuture::Service {
             fut: self.inner.call(req),

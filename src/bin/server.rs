@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 use anyhow::Result;
 use hyper::Request;
 use hyper_util::rt::TokioExecutor;
-use hyper_util::server::conn::auto::Builder;
+use hyper_util::server::conn::auto::{Builder, Http1Builder};
 use hyper_util::server::graceful::Watcher;
 use hyper_util::{rt::TokioIo, service::TowerToHyperService};
 use std::time::Instant;
@@ -112,6 +112,8 @@ async fn handle_https(
             error!("error when serving connection {e:#}");
         }
     };
+
+    debug!("stream closed");
 }
 
 async fn handle_http(stream: TcpStream, addr: SocketAddr, service: HyperService, watcher: Watcher) {
@@ -130,4 +132,5 @@ async fn handle_http(stream: TcpStream, addr: SocketAddr, service: HyperService,
     {
         error!("error when serving connection {e:#}");
     };
+    debug!("stream closed");
 }

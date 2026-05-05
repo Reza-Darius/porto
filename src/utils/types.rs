@@ -68,19 +68,27 @@ impl PeerTable {
 
     pub fn register_peer(&self, proxy: ProxyConfig) {
         let id = PeerId::new();
-        let peer = Peer::new(proxy.upstream);
+        let peer = Peer::new(
+            proxy.upstream,
+            match proxy.http2 {
+                true => PeerProto::Http2,
+                false => PeerProto::Http1,
+            },
+        );
         self.inner.alive_peers.lock().insert(id, peer);
         self.inner.domain_table.lock().insert(proxy.domain, id);
     }
 
-    pub fn get_peer_addr(&self, host: &str) -> Option<PeerAddr> {
-        self.inner.domain_table.lock().get(host).and_then(|id| {
-            self.inner
-                .alive_peers
-                .lock()
-                .get(id)
-                .map(|peer| peer.addr.clone())
-        })
+    pub fn get_peer(&self, host: &str) -> Option<Peer> {
+        self.inner
+            .domain_table
+            .lock()
+            .get(host)
+            .and_then(|id| self.get_peer_by_id(id))
+    }
+
+    pub fn get_peer_by_id(&self, id: &PeerId) -> Option<Peer> {
+        self.inner.alive_peers.lock().get(id).cloned()
     }
 
     pub fn get_domains(&self) -> Vec<Domain> {
@@ -98,16 +106,22 @@ impl PeerId {
 }
 
 /// a backend peer to upstream requests to
-#[derive(Debug)]
-struct Peer {
-    addr: PeerAddr,
-    alive: bool,
+#[derive(Debug, Clone)]
+pub struct Peer {
+    pub addr: PeerAddr,
+    pub prot: PeerProto,
 }
 
 impl Peer {
-    fn new(addr: PeerAddr) -> Self {
-        Peer { addr, alive: false }
+    fn new(addr: PeerAddr, prot: PeerProto) -> Self {
+        Peer { addr, prot }
     }
+}
+
+pub struct PeerInner {
+    pub addr: PeerAddr,
+    pub alive: bool,
+    pub http_prot: PeerProto,
 }
 
 impl<const N: usize> TryFrom<&[(&str, &str); N]> for PeerTable {
@@ -143,7 +157,6 @@ impl Display for PeerTable {
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct PeerAddr {
-    pub prot: PeerProto,
     inner: Arc<PeerAddrInner>,
 }
 
@@ -164,7 +177,6 @@ impl<'de> Deserialize<'de> for PeerAddr {
         let inner = PeerAddrInner::deserialize(deserializer)?;
         Ok(PeerAddr {
             inner: Arc::new(inner),
-            prot: PeerProto::Http1,
         })
     }
 }
@@ -212,7 +224,6 @@ impl TryFrom<&str> for PeerAddr {
 
         Ok(PeerAddr {
             inner: Arc::new(inner),
-            prot: PeerProto::Http1,
         })
     }
 }

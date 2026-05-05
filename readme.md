@@ -4,15 +4,13 @@ a simple but fast reverse proxy with TLS termination
 
 ## Features
 
-- HTTP upstreaming with hyper, tokio and tower
-- Custom connection pool
+- Custom connection pool over tokio and hyper
 - Proxying to UDS and TCP sockets
 - HTTPS support with rustls
 - ACME support for automatic certificate renewal
 - CLI and config file parsing with clap
 - Response caching according to RFC 7234
-- Logging with tracing
-- Response Compression
+- Response compression
 
 ## WIP
 

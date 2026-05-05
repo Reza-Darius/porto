@@ -19,7 +19,7 @@ use hyper_util::{
 use tokio::net::{TcpStream, UnixStream};
 use tower::{BoxError, Layer, Service, ServiceBuilder, ServiceExt, layer::layer_fn, service_fn};
 use tower_http::{compression::CompressionLayer, timeout::TimeoutLayer, trace::TraceLayer};
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::{
     config::PortoConfig,
@@ -272,7 +272,7 @@ pub fn setup_service(config: &PortoConfig) -> HyperService {
 
 pub fn setup_service4(config: &PortoConfig) -> HyperService {
     let table = PeerTable::init(config);
-    info!("initialized domains {table}");
+    debug!("initialized domains {table}");
 
     // building THE tower (tm)
     let tower = ServiceBuilder::new()

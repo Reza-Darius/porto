@@ -45,7 +45,7 @@ pub struct PortoConfig {
 #[derive(Debug, Default)]
 struct ServiceConfig {}
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct ProxyConfig {
     pub domain: Domain,
     pub upstream: PeerAddr,

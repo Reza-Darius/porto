@@ -5,12 +5,13 @@ use axum::{
     Router,
     body::Body,
     extract::Request,
+    handler::HandlerWithoutStateExt,
     response::{IntoResponse, Response},
     routing::get,
 };
 use http::StatusCode;
 use http::header::CACHE_CONTROL;
-use hyper::server::conn::http1;
+use hyper::{server::conn::http1, service::service_fn};
 use hyper_util::{rt::TokioIo, service::TowerToHyperService};
 use porto::utils::{PeerAddr, PeerAddrInner, setup_tracing};
 use tokio::{fs, task::JoinSet};
@@ -72,6 +73,10 @@ async fn main() -> Result<()> {
     set.join_all().await;
 
     Ok(())
+}
+
+async fn hyper(req: hyper::Request<hyper::body::Incoming>) -> http::Response<porto::utils::Body> {
+    todo!()
 }
 
 async fn echo(req: Request) -> impl IntoResponse {

@@ -11,19 +11,25 @@ use hyper::body::Incoming;
 use hyper_util::client::pool::singleton::Singleton;
 use parking_lot::Mutex;
 use tower::{BoxError, Service, ServiceBuilder, ServiceExt, service_fn, util::BoxCloneService};
-use tracing::{debug, trace};
+use tracing::{debug, error, trace};
 
 use crate::{
     services::{
         connector::UpstreamConnector,
         proxy::{Http1Connector, Http2Connector},
     },
-    utils::{Body, BoxFut, PeerAddr, response},
+    utils::{Body, BoxFut, Peer, PeerAddr, response},
 };
 
 #[derive(Debug, Clone)]
 pub struct ConnectionService {
     table: Arc<Mutex<HashMap<PeerAddr, HttpClient>>>,
+}
+
+struct PoolConfig {
+    max_in_flight: u16,
+    max_http1_con: u16,
+    max_http2_con: u16,
 }
 
 // TODO: take configuration
@@ -44,13 +50,13 @@ impl Service<Request<Incoming>> for ConnectionService {
     }
 
     fn call(&mut self, req: Request<Incoming>) -> Self::Future {
-        let Some(addr) = req.extensions().get::<PeerAddr>().cloned() else {
+        let Some(peer) = req.extensions().get::<Peer>().cloned() else {
             return Box::pin(async {
                 Err(anyhow!("Connection Service Error: no PeerAddr found on request").into())
             });
         };
-        let prot = addr.prot;
-        let mut svc = match self.table.lock().entry(addr) {
+        let prot = peer.prot;
+        let mut svc = match self.table.lock().entry(peer.addr) {
             std::collections::hash_map::Entry::Occupied(occupied_entry) => {
                 debug!(addr = %occupied_entry.key(), "getting client from table");
                 occupied_entry.get().clone()
@@ -72,7 +78,7 @@ impl Service<Request<Incoming>> for ConnectionService {
                 }
             }
         };
-        Box::pin(async move { svc.call(req).await })
+        Box::pin(async move { svc.call(req).await.inspect_err(|e| error!(%e)) })
     }
 }
 
@@ -121,24 +127,24 @@ fn new_http1_client(
     let http1con = service_fn(move |req: Request<_>| {
         let mut http1_svc = http1.clone();
         async move {
-            trace!("calling connector");
-            let peer_addr = req
+            debug!("calling connector");
+            let peer = req
                 .extensions()
-                .get()
+                .get::<Peer>()
                 .cloned()
                 .ok_or_else(|| anyhow!("PeerAddr extension not found, req: {req:?}"))?;
 
             let Ok(mut sender) = http1_svc
                 .ready() // important to call ready here, otherwise the worker panics
                 .await?
-                .call(peer_addr) // call pool
+                .call(peer.addr) // call pool
                 .await
                 .inspect_err(|e| tracing::error!(%e, "couldnt get sender"))
             else {
                 return Ok::<Response<Body>, BoxError>(response(StatusCode::INTERNAL_SERVER_ERROR));
             };
 
-            trace!("sending request");
+            debug!("sending request");
             sender.ready().await?.call(req).await.or_else(|e| {
                 tracing::error!(%e, "sending failed");
                 Ok(response(StatusCode::INTERNAL_SERVER_ERROR))
@@ -187,24 +193,24 @@ fn new_http2_client(
     let http2con = service_fn(move |req: Request<_>| {
         let mut http2_svc = http2.clone();
         async move {
-            trace!("calling connector");
-            let peer_addr = req
+            debug!("calling connector");
+            let peer = req
                 .extensions()
-                .get()
+                .get::<Peer>()
                 .cloned()
                 .ok_or_else(|| anyhow!("PeerAddr extension not found, req: {req:?}"))?;
 
             let Ok(mut sender) = http2_svc
                 .ready() // important to call ready here, otherwise the worker panics
                 .await?
-                .call(peer_addr) // call pool
+                .call(peer.addr) // call pool
                 .await
                 .inspect_err(|e| tracing::error!(%e, "couldnt get sender"))
             else {
                 return Ok::<Response<Body>, BoxError>(response(StatusCode::INTERNAL_SERVER_ERROR));
             };
 
-            trace!("sending request");
+            debug!("sending request");
             sender.ready().await?.call(req).await.or_else(|e| {
                 tracing::error!(%e, "sending failed");
                 Ok(response(StatusCode::INTERNAL_SERVER_ERROR))
