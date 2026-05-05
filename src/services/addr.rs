@@ -1,5 +1,6 @@
 use std::{str::FromStr, task::Poll};
 
+use anyhow::anyhow;
 use http::{Uri, Version, uri::Authority};
 use hyper::{Request, Response, StatusCode};
 use hyperlocal::Uri as UdsUri;
@@ -50,14 +51,7 @@ where
     #[tracing::instrument(skip_all)]
     fn call(&mut self, req: Request<B>) -> Self::Future {
         let (mut parts, body) = req.into_parts();
-        let Some(path_and_query) = parts.uri.path_and_query() else {
-            debug!("no path found on request");
-            return AddrFuture::Error {
-                code: StatusCode::BAD_REQUEST,
-            };
-        };
 
-        // get host name
         let Some(req_host) = get_host(&parts) else {
             debug!("no host header found on request");
             return AddrFuture::Error {
@@ -65,7 +59,6 @@ where
             };
         };
 
-        // get associated socket name
         let Some(peer_addr) = self.table.get_peer_addr(req_host) else {
             debug!(requested_host = %req_host, "coulndnt retrieve socket name");
             return AddrFuture::Error {
@@ -82,32 +75,64 @@ where
             parts.version = Version::HTTP_11;
         }
 
-        parts.uri = match &*peer_addr {
-            PeerAddrInner::Uds(socket_addr) => {
-                UdsUri::new(socket_addr, path_and_query.as_str()).into()
-            }
-            PeerAddrInner::Ipv4(addr) => {
-                let authority: Authority = Authority::from_str(&addr.to_string()).unwrap();
-                Uri::builder()
-                    .scheme("http")
-                    .authority(authority)
-                    .path_and_query(path_and_query.to_owned())
-                    .build()
-                    .unwrap()
+        // rewrite URI
+        parts.uri = match uri_absolute(&parts, &peer_addr) {
+            Ok(uri) => uri,
+            Err(e) => {
+                tracing::error!(%e, "couldnt create absolute uri");
+                return AddrFuture::Error {
+                    code: StatusCode::BAD_REQUEST,
+                };
             }
         };
 
-        debug!(?parts, "rewritten to response");
+        debug!(peer_addr= %peer_addr, ?parts, "rewritten to response");
 
         let mut req = Request::from_parts(parts, body);
 
-        adjust_header(&mut req);
+        insert_forward_header(&mut req);
         req.extensions_mut().insert(peer_addr);
 
         AddrFuture::Service {
             fut: self.inner.call(req),
         }
     }
+}
+
+// this is not ideal but compatible with the hyper legacy client
+fn uri_absolute(parts: &http::request::Parts, peer_addr: &PeerAddr) -> anyhow::Result<Uri> {
+    let path = parts
+        .uri
+        .path_and_query()
+        .cloned()
+        .ok_or_else(|| anyhow!("no path found on request"))?;
+
+    let uri = match &**peer_addr {
+        PeerAddrInner::Uds(socket_addr) => UdsUri::new(socket_addr, path.as_str()).into(),
+        PeerAddrInner::Ipv4(addr) => {
+            let authority: Authority = Authority::from_str(&addr.to_string()).unwrap();
+            Uri::builder()
+                .scheme("http")
+                .authority(authority)
+                .path_and_query(path)
+                .build()
+                .unwrap()
+        }
+    };
+    Ok(uri)
+}
+
+fn uri_origin(parts: &http::request::Parts) -> anyhow::Result<Uri> {
+    let path = parts
+        .uri
+        .path_and_query()
+        .cloned()
+        .ok_or_else(|| anyhow!("no path found on request"))?;
+
+    Uri::builder()
+        .path_and_query(path)
+        .build()
+        .map_err(Into::into)
 }
 
 pin_project! {

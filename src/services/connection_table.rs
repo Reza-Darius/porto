@@ -11,7 +11,7 @@ use hyper::body::Incoming;
 use hyper_util::client::pool::singleton::Singleton;
 use parking_lot::Mutex;
 use tower::{BoxError, Service, ServiceBuilder, ServiceExt, service_fn, util::BoxCloneService};
-use tracing::debug;
+use tracing::{debug, trace};
 
 use crate::{
     services::{
@@ -44,17 +44,23 @@ impl Service<Request<Incoming>> for ConnectionService {
     }
 
     fn call(&mut self, req: Request<Incoming>) -> Self::Future {
-        let addr = req.extensions().get::<PeerAddr>().cloned().unwrap();
+        let Some(addr) = req.extensions().get::<PeerAddr>().cloned() else {
+            return Box::pin(async {
+                Err(anyhow!("Connection Service Error: no PeerAddr found on request").into())
+            });
+        };
         let prot = addr.prot;
-        let mut svc = match self.table.lock().entry(addr.clone()) {
+        let mut svc = match self.table.lock().entry(addr) {
             std::collections::hash_map::Entry::Occupied(occupied_entry) => {
-                debug!(%addr, "getting client from table");
+                debug!(addr = %occupied_entry.key(), "getting client from table");
                 occupied_entry.get().clone()
             }
             // initialize a fresh client
             std::collections::hash_map::Entry::Vacant(vacant_entry) => {
-                debug!(%addr, "initializing fresh client");
+                let addr = vacant_entry.key().clone();
                 let handle = self.table.clone();
+
+                debug!(%addr, "initializing fresh client");
 
                 match prot {
                     crate::utils::PeerProto::Http1 => {
@@ -92,10 +98,12 @@ fn new_http1_client(
         let mut timeout_check = tokio::time::interval(Duration::from_secs(30));
         let idle_dur = Duration::from_secs(20);
 
+        // the first tick completes instantly
+        timeout_check.tick().await;
         loop {
             timeout_check.tick().await;
             if worker_clone.is_empty() {
-                debug!(%addr, "removing client");
+                debug!(%addr, "removing HTTP1 client");
                 handle.lock().remove(&addr);
                 return;
             }
@@ -108,11 +116,12 @@ fn new_http1_client(
             });
         }
     });
+
     // wrapper service to avoide double service calls and because "Cache" isnt nameable
     let http1con = service_fn(move |req: Request<_>| {
         let mut http1_svc = http1.clone();
         async move {
-            debug!("calling connector");
+            trace!("calling connector");
             let peer_addr = req
                 .extensions()
                 .get()
@@ -129,6 +138,7 @@ fn new_http1_client(
                 return Ok::<Response<Body>, BoxError>(response(StatusCode::INTERNAL_SERVER_ERROR));
             };
 
+            trace!("sending request");
             sender.ready().await?.call(req).await.or_else(|e| {
                 tracing::error!(%e, "sending failed");
                 Ok(response(StatusCode::INTERNAL_SERVER_ERROR))
@@ -154,10 +164,12 @@ fn new_http2_client(
         let mut timeout_check = tokio::time::interval(Duration::from_secs(30));
         let idle_dur = Duration::from_secs(20);
 
+        // the first tick completes instantly
+        timeout_check.tick().await;
         loop {
             timeout_check.tick().await;
             if worker_clone.is_empty() {
-                debug!(%addr, "removing client");
+                debug!(%addr, "removing HTTP2 client");
                 handle.lock().remove(&addr);
                 return;
             }
@@ -170,11 +182,12 @@ fn new_http2_client(
             });
         }
     });
+
     // wrapper service to avoide double service calls and because "Singleton" isnt nameable
     let http2con = service_fn(move |req: Request<_>| {
         let mut http2_svc = http2.clone();
         async move {
-            debug!("calling connector");
+            trace!("calling connector");
             let peer_addr = req
                 .extensions()
                 .get()
@@ -191,6 +204,7 @@ fn new_http2_client(
                 return Ok::<Response<Body>, BoxError>(response(StatusCode::INTERNAL_SERVER_ERROR));
             };
 
+            trace!("sending request");
             sender.ready().await?.call(req).await.or_else(|e| {
                 tracing::error!(%e, "sending failed");
                 Ok(response(StatusCode::INTERNAL_SERVER_ERROR))

@@ -21,7 +21,7 @@ use tokio::net::TcpStream;
 use tower::BoxError;
 use tower::util::BoxCloneService;
 
-use crate::config::PortoConfig;
+use crate::config::{PortoConfig, ProxyConfig};
 
 pub type BoxFut<R, E> = Pin<Box<dyn Future<Output = std::result::Result<R, E>> + Send>>;
 pub type Body = BoxBody<Bytes, BoxError>;
@@ -60,17 +60,17 @@ impl PeerTable {
             }),
         };
         // TODO: intializing backnds needs to move somewhere else
-        for (domain, peer) in config.get_proxies() {
-            table.register_peer(domain.clone(), peer.clone());
+        for proxy in config.get_proxies() {
+            table.register_peer(proxy);
         }
         table
     }
 
-    pub fn register_peer(&self, domain: Domain, addr: PeerAddr) {
+    pub fn register_peer(&self, proxy: ProxyConfig) {
         let id = PeerId::new();
-        let peer = Peer::new(addr);
+        let peer = Peer::new(proxy.upstream);
         self.inner.alive_peers.lock().insert(id, peer);
-        self.inner.domain_table.lock().insert(domain, id);
+        self.inner.domain_table.lock().insert(proxy.domain, id);
     }
 
     pub fn get_peer_addr(&self, host: &str) -> Option<PeerAddr> {
@@ -104,15 +104,6 @@ struct Peer {
     alive: bool,
 }
 
-/// the HTTP protocol supported by the backend
-#[derive(Debug, Clone, Copy, Deserialize, Hash, PartialEq, Eq, PartialOrd, Ord, Default)]
-#[serde(untagged)]
-pub enum PeerProto {
-    #[default]
-    Http1,
-    Http2,
-}
-
 impl Peer {
     fn new(addr: PeerAddr) -> Self {
         Peer { addr, alive: false }
@@ -126,9 +117,14 @@ impl<const N: usize> TryFrom<&[(&str, &str); N]> for PeerTable {
         let table = PeerTable::new();
 
         for (domain, addr) in value.iter() {
-            let d = Domain::parse(domain)?;
-            let p = PeerAddr::try_from(*addr)?;
-            table.register_peer(d, p);
+            let domain = Domain::parse(domain)?;
+            let upstream = PeerAddr::try_from(*addr)?;
+            let p = ProxyConfig {
+                domain,
+                upstream,
+                http2: false,
+            };
+            table.register_peer(p);
         }
 
         Ok(table)
@@ -149,6 +145,15 @@ impl Display for PeerTable {
 pub struct PeerAddr {
     pub prot: PeerProto,
     inner: Arc<PeerAddrInner>,
+}
+
+/// the HTTP protocol supported by the backend
+#[derive(Debug, Clone, Copy, Deserialize, Hash, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[serde(untagged)]
+pub enum PeerProto {
+    #[default]
+    Http1,
+    Http2,
 }
 
 impl<'de> Deserialize<'de> for PeerAddr {

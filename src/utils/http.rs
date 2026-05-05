@@ -121,11 +121,11 @@ pub fn strip_port(input: &str) -> &str {
     input.split(':').next().unwrap_or(input)
 }
 
-pub fn adjust_header<B>(req: &mut Request<B>) {
+pub fn insert_forward_header<B>(req: &mut Request<B>) {
     strip_header(req.headers_mut());
 
     if let Some(client_addr) = req.extensions().get::<IpSockAddr>().cloned() {
-        debug!("adjusting header with {client_addr}");
+        debug!("inserted forward header: {client_addr}");
 
         if let Ok(addr) = HeaderValue::from_str(&client_addr.to_string()) {
             req.headers_mut().insert("X-Forwarded-For", addr);
@@ -151,7 +151,7 @@ pub fn strip_header(headers: &mut HeaderMap) {
 
 pub fn rewrite_request<B>(mut req: Request<B>, upstream_uri: Uri) -> Request<B> {
     let t = Instant::now();
-    adjust_header(&mut req);
+    insert_forward_header(&mut req);
 
     let (mut parts, body) = req.into_parts();
 

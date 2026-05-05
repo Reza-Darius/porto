@@ -1,27 +1,24 @@
-use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU16, Ordering};
-use std::task::Poll;
 use std::time::Instant;
 
 use anyhow::anyhow;
-use futures::FutureExt;
 use http_body_util::BodyExt;
 use hyper::body::Incoming;
 use hyper::client::conn::http1::SendRequest;
 use hyper::client::conn::http2::SendRequest as SendRequest2;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::{TokioExecutor, TokioIo};
-use parking_lot::Mutex;
-use tokio::net::{TcpStream, UnixStream};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
-use tokio::time::Duration;
 use tokio_util::sync::PollSemaphore;
-use tower::{BoxError, Service, ServiceBuilder, ServiceExt};
+use tower::{BoxError, Service, ServiceExt};
 use tracing::{debug, error};
 
 use crate::services::connector::Upstream;
 use crate::utils::*;
+
+// this could be a larger int but eh, i dont care that much
+static CON_ID: AtomicU16 = AtomicU16::new(0);
 
 /// wrapper around a connection pool
 #[derive(Clone)]
@@ -92,45 +89,6 @@ where
                     error!(%e, "sending failed");
                     Ok(response(StatusCode::INTERNAL_SERVER_ERROR))
                 })
-        })
-    }
-}
-
-/// thin service wrapper over a sender
-///
-/// this is whats being cached
-pub struct Http1Sender<B> {
-    pub last_used: Instant,
-    pub sender: SendRequest<B>,
-    _permit: OwnedSemaphorePermit,
-    con_id: u16,
-}
-
-impl<B> Drop for Http1Sender<B> {
-    fn drop(&mut self) {
-        debug!(id = self.con_id, "dropping sender");
-    }
-}
-
-impl Service<Request<Incoming>> for Http1Sender<Incoming> {
-    type Response = Response<Body>;
-    type Error = BoxError;
-    type Future = BoxFut<Self::Response, Self::Error>;
-
-    fn poll_ready(
-        &mut self,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<std::result::Result<(), Self::Error>> {
-        self.sender.poll_ready(cx).map_err(Into::into)
-    }
-
-    fn call(&mut self, req: Request<Incoming>) -> Self::Future {
-        self.last_used = Instant::now();
-        let f = self.sender.send_request(req);
-        Box::pin(async move {
-            let resp = f.await?;
-            debug!(?resp, "response from backend");
-            Ok(resp.map(|r| r.map_err(Into::into).boxed()))
         })
     }
 }
@@ -254,6 +212,45 @@ impl Service<Request<Incoming>> for Http1Sender<Incoming> {
 //     }
 // }
 
+/// thin service wrapper over a sender
+///
+/// this is whats being cached
+pub struct Http1Sender<B> {
+    pub last_used: Instant,
+    pub sender: SendRequest<B>,
+    _permit: OwnedSemaphorePermit,
+    con_id: u16,
+}
+
+impl<B> Drop for Http1Sender<B> {
+    fn drop(&mut self) {
+        debug!(id = self.con_id, "dropping sender");
+    }
+}
+
+impl Service<Request<Incoming>> for Http1Sender<Incoming> {
+    type Response = Response<Body>;
+    type Error = BoxError;
+    type Future = BoxFut<Self::Response, Self::Error>;
+
+    fn poll_ready(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::result::Result<(), Self::Error>> {
+        self.sender.poll_ready(cx).map_err(Into::into)
+    }
+
+    fn call(&mut self, req: Request<Incoming>) -> Self::Future {
+        self.last_used = Instant::now();
+        let f = self.sender.send_request(req);
+        Box::pin(async move {
+            let resp = f.await?;
+            debug!(?resp, "response from backend");
+            Ok(resp.map(|r| r.map_err(Into::into).boxed()))
+        })
+    }
+}
+
 /// a service to establish a connection to a backend via UDS or TCP
 #[derive(Debug)]
 pub struct Http1Connector<S> {
@@ -311,7 +308,7 @@ where
         self.inner.poll_ready(cx).map_err(Into::into)
     }
 
-    fn call(&mut self, req: PeerAddr) -> Self::Future {
+    fn call(&mut self, addr: PeerAddr) -> Self::Future {
         // we take a permit and pack it into the sender
         let permit = self
             .permit
@@ -329,26 +326,28 @@ where
         let mut svc = std::mem::replace(&mut self.inner, clone);
 
         Box::pin(async move {
-            debug!(%req, "dialing new upstream connection");
+            debug!(%addr, "dialing new upstream connection");
 
             let t = Instant::now();
-            let stream = svc.call(req).await.map_err(Into::into)?;
+            let stream = svc.call(addr).await.map_err(Into::into)?;
             let (sender, conn) =
                 hyper::client::conn::http1::handshake(TokioIo::new(stream)).await?;
-            let id = n_connections.fetch_add(1, Ordering::Relaxed) + 1;
+            n_connections.fetch_add(1, Ordering::Relaxed);
 
             tokio::spawn(async move {
                 if let Err(err) = conn.await {
-                    error!("TCP Connection failed: {err:#}");
+                    error!("Connection failed: {err:#}");
                 }
                 let n = n_connections.fetch_sub(1, Ordering::Relaxed) - 1;
-                debug!(n_con = n, "shutting down TCP connection");
+                debug!(active_connections = n, "shutting down connection");
             });
+
+            let id = CON_ID.fetch_add(1, Ordering::Relaxed);
 
             debug!(
                 id = id,
                 elapsed_ms = t.elapsed().as_millis(),
-                "TCP connection established"
+                "HTTP1 connection established"
             );
 
             Ok(Http1Sender {
@@ -463,20 +462,22 @@ where
             let (sender, conn) =
                 hyper::client::conn::http2::handshake(TokioExecutor::new(), TokioIo::new(stream))
                     .await?;
-            let id = n_connections.fetch_add(1, Ordering::Relaxed) + 1;
+            n_connections.fetch_add(1, Ordering::Relaxed);
 
             tokio::spawn(async move {
                 if let Err(err) = conn.await {
-                    error!("TCP Connection failed: {err:#}");
+                    error!("Connection failed: {err:#}");
                 }
                 let n = n_connections.fetch_sub(1, Ordering::Relaxed) - 1;
-                debug!(n_con = n, "shutting down TCP connection");
+                debug!(active_connections = n, "shutting down connection");
             });
+
+            let id = CON_ID.fetch_add(1, Ordering::Relaxed);
 
             debug!(
                 id = id,
                 elapsed_ms = t.elapsed().as_millis(),
-                "TCP connection established"
+                "HTTP2 connection established"
             );
 
             Ok(Http2Sender {

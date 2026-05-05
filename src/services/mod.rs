@@ -290,7 +290,7 @@ pub fn setup_service4(config: &PortoConfig) -> HyperService {
     tower
         .map_response(|resp| resp.map(|body| body.boxed()))
         .map_response(|resp| {
-            info!("response {resp:?}");
+            info!("sending {resp:?}");
             resp
         })
         .map_err(anyhow::Error::from_boxed)

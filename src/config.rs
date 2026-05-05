@@ -34,7 +34,8 @@ pub struct PortoConfig {
     pub key_path: Option<PathBuf>,
     // for ACME
     pub credentials: Option<PathBuf>,
-    proxy: Vec<Proxy>,
+    proxy: Vec<ProxyConfig>,
+
     #[serde(skip)]
     pub service: ServiceConfig,
     #[serde(skip)]
@@ -44,15 +45,17 @@ pub struct PortoConfig {
 #[derive(Debug, Default)]
 struct ServiceConfig {}
 
-#[derive(Debug, Deserialize)]
-struct Proxy {
-    domain: Domain,
-    upstream: PeerAddr,
+#[derive(Debug, Deserialize, Clone)]
+pub struct ProxyConfig {
+    pub domain: Domain,
+    pub upstream: PeerAddr,
+    #[serde(default)]
+    pub http2: bool,
 }
 
 impl PortoConfig {
-    pub fn get_proxies(&self) -> impl Iterator<Item = (&Domain, &PeerAddr)> {
-        self.proxy.iter().map(|p| (&p.domain, &p.upstream))
+    pub fn get_proxies(&self) -> impl Iterator<Item = ProxyConfig> {
+        self.proxy.clone().into_iter()
     }
 
     pub fn get_addr(&self) -> SocketAddr {

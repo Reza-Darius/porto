@@ -1692,6 +1692,7 @@ dependencies = [
  "foyer",
  "futures",
  "futures-util",
+ "hex",
  "http",
  "http-body-util",
  "http-cache-semantics",
