@@ -4,7 +4,7 @@ a simple but fast reverse proxy with TLS termination
 
 ## Features
 
-- Custom connection pool over tokio and hyper
+- Custom connection pool for blazingly fast performance
 - Proxying to UDS and TCP sockets
 - HTTPS support with rustls
 - ACME support for automatic certificate renewal
@@ -15,7 +15,9 @@ a simple but fast reverse proxy with TLS termination
 ## WIP
 
 - Rate Limiting
+- Load Balancing
 - Health checks
+- Notifications/Metrics
 
 ## Hello World
 
@@ -49,6 +51,8 @@ key_path = "credentials/testpeer.com-key.pem"
 [[proxy]]
 domain = "RustIsAwsome.com"
 upstream = "127.0.0.10:4000"
+# optional flag
+http2 = true
 
 [[proxy]]
 domain = "GolangIsCoolToo.com"

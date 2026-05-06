@@ -7,7 +7,7 @@ pub struct Queue<T> {
     data: Vec<MaybeUninit<T>>,
     len: u16,
     cap: u16,
-    /// points to the slot for next element
+    /// points to the next vacant slot
     head: usize,
     /// points to slot for next pop
     tail: usize,
@@ -15,6 +15,10 @@ pub struct Queue<T> {
 
 impl<T> Queue<T> {
     pub fn new(cap: usize) -> Self {
+        assert!(
+            cap <= u16::MAX as usize,
+            "queue only supports max u16 elements"
+        );
         let mut v = Vec::with_capacity(cap);
 
         // SAFETY:
@@ -119,7 +123,7 @@ impl<T: Clone> Clone for Queue<T> {
         for i in 0..self.len {
             let idx = (self.tail + i as usize) % new.cap as usize;
             new.push(unsafe { self.data[idx].assume_init_ref().clone() })
-                .expect("this cant fail because only clone over n < cap elements");
+                .expect("this cant fail because we only clone over n <= cap elements");
         }
         new
     }

@@ -31,7 +31,7 @@ const CHECK_INTERVAL_HOURS: u64 = 24;
 const CERT_FILENAME: &str = "acme_cert.pem";
 const KEY_FILENAME: &str = "acme_key.pem";
 
-/// clonable handler
+/// clonable handler to Porto's main TLS struct
 #[derive(Clone)]
 pub struct PortoTLS {
     inner: Arc<PortoTLSInner>,

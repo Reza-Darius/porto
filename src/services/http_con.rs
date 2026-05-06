@@ -160,8 +160,6 @@ where
 }
 
 /// thin service wrapper over a sender
-///
-/// this is whats being cached
 pub struct Http2Sender<B> {
     pub last_used: Instant,
     pub sender: SendRequest2<B>,

@@ -4,6 +4,7 @@ use derive_more::{AsRef, Display, From};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;
 
+/// checks for client hello
 pub async fn is_tls(stream: &TcpStream) -> bool {
     let mut peek_buf = [0u8; 1];
     match stream.peek(&mut peek_buf).await {
@@ -13,6 +14,7 @@ pub async fn is_tls(stream: &TcpStream) -> bool {
     }
 }
 
+/// PEM encoded certificate chain
 #[derive(Debug, Clone, Display, Hash, Eq, PartialEq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct CertChainPem(String);
@@ -27,6 +29,7 @@ impl CertChainPem {
     }
 }
 
+/// PEM encoded certificate key
 #[derive(Debug, Clone, Display, Hash, Eq, PartialEq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct KeyPem(String);
@@ -41,6 +44,7 @@ impl KeyPem {
     }
 }
 
+/// ACME token for HTTP1 challenge
 #[derive(Debug, Clone, AsRef, Display, Hash, Eq, PartialEq, PartialOrd, Ord, From)]
 pub struct AcmeToken(String);
 
