@@ -13,13 +13,11 @@ use parking_lot::Mutex;
 use tower::{BoxError, Service, ServiceBuilder, ServiceExt, service_fn, util::BoxCloneService};
 use tracing::{debug, error, trace};
 
-use crate::{
-    services::{
-        connector::UpstreamConnector,
-        proxy::{Http1Connector, Http2Connector},
-    },
-    utils::{Body, BoxFut, Peer, PeerAddr, response},
+use super::{
+    connector::UpstreamConnector,
+    http::{Http1Connector, Http2Connector},
 };
+use crate::utils::{Body, BoxFut, Peer, PeerAddr, response};
 
 #[derive(Clone)]
 pub struct ConnectionService {

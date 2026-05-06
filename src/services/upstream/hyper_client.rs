@@ -10,7 +10,7 @@ use tokio::time::Instant;
 use tower::{BoxError, Service};
 use tracing::{debug, error};
 
-use crate::services::connector::UpstreamConnector;
+use super::connector::UpstreamConnector;
 use crate::utils::*;
 
 /*

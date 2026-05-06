@@ -13,7 +13,7 @@ use tokio_util::sync::PollSemaphore;
 use tower::{BoxError, Service};
 use tracing::{debug, error};
 
-use crate::services::connector::Upstream;
+use super::connector::Upstream;
 use crate::utils::*;
 
 // this could be a larger int but eh, i dont care that much

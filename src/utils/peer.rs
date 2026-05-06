@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use tokio::net::TcpStream;
 use tower::BoxError;
 use tower::util::BoxCloneService;
+use tracing::debug;
 
 use crate::config::{PortoConfig, ProxyConfig};
 
@@ -64,6 +65,8 @@ impl PeerTable {
         for proxy in config.get_proxies() {
             table.register_peer(proxy);
         }
+
+        debug!("initialized domains {table}");
         table
     }
 
