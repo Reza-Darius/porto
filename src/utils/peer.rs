@@ -80,6 +80,7 @@ impl PeerTable {
         self.inner.domain_table.lock().insert(proxy.domain, id);
     }
 
+    /// fetches a reachable Peer
     pub fn get_peer(&self, host: &str) -> Option<Peer> {
         self.inner
             .domain_table

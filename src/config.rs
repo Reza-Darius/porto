@@ -14,7 +14,7 @@ use crate::utils::{Domain, PeerAddr};
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
 pub struct Cli {
-    /// Addr and port for Porto to listen on
+    /// Addr and port for Porto to listen on, overrides config
     addr: Option<SocketAddr>,
 
     /// Sets path to a porto.toml config file

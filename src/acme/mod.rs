@@ -197,7 +197,7 @@ async fn acme_worker(store: PortoTLS, mode: AcmeWorkerMode) {
             };
         }
         AcmeWorkerMode::Prod => {
-            let account = get_acme_acc(&store.inner.cred_path).await.unwrap();
+            let account = get_account(&store.inner.cred_path).await.unwrap();
             let mut timer = tokio::time::interval(Duration::from_hours(CHECK_INTERVAL_HOURS));
 
             loop {

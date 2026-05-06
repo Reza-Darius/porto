@@ -5,12 +5,11 @@ use std::{
 
 use anyhow::anyhow;
 use http::{Uri, Version, uri::Authority};
-use http_cache_semantics::RequestLike;
 use hyper::{Request, Response, StatusCode};
 use hyperlocal::Uri as UdsUri;
 use pin_project_lite::pin_project;
 use tower::{BoxError, Service};
-use tracing::debug;
+use tracing::{debug, error};
 
 use crate::utils::*;
 
@@ -59,13 +58,16 @@ where
 
         let Some(req_host) = get_host_from_parts(&parts) else {
             debug!("no host header found on request");
+
             return AddrFuture::Error {
                 code: StatusCode::BAD_REQUEST,
             };
         };
 
         let Some(peer) = self.table.get_peer(req_host) else {
+            // peer might be missing or unreachable
             debug!(requested_host = %req_host, "no peer found");
+
             return AddrFuture::Error {
                 code: StatusCode::NOT_FOUND,
             };
@@ -83,7 +85,8 @@ where
         parts.uri = match uri_absolute(&parts, &peer.addr) {
             Ok(uri) => uri,
             Err(e) => {
-                tracing::error!(%e, "couldnt create absolute uri");
+                error!(%e, "couldnt create absolute uri");
+
                 return AddrFuture::Error {
                     code: StatusCode::BAD_REQUEST,
                 };
