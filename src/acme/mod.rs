@@ -1,0 +1,287 @@
+#![allow(dead_code)]
+mod account;
+mod challenge;
+mod helper;
+mod order;
+mod resolver;
+
+use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
+
+use anyhow::{Result, anyhow};
+use instant_acme::KeyAuthorization;
+use parking_lot::Mutex;
+use rustls::{
+    ServerConfig,
+    pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
+    sign::CertifiedKey,
+};
+use time::OffsetDateTime;
+use tokio_rustls::TlsAcceptor;
+use tracing::{debug, error, info, warn};
+use x509_parser::pem::parse_x509_pem;
+
+use crate::{config::PortoConfig, utils::*};
+use account::*;
+use helper::*;
+use order::*;
+use resolver::*;
+
+const RENEWAL_THRESHOLD_DAYS: i64 = 30;
+const RENEWAL_THRESHHOLD: i64 = 60 * 60 * 24 * RENEWAL_THRESHOLD_DAYS;
+const CHECK_INTERVAL_HOURS: u64 = 24;
+
+const CERT_FILENAME: &str = "acme_cert.pem";
+const KEY_FILENAME: &str = "acme_key.pem";
+
+/// clonable handler
+#[derive(Debug, Clone)]
+pub struct PortoTLS {
+    inner: Arc<PortoTLSInner>,
+}
+
+#[derive(Debug)]
+struct PortoTLSInner {
+    cred_path: PathBuf,
+    /// table of registered domains in the proxy
+    peers: PeerTable,
+    /// in memory cache
+    certs: Mutex<HashMap<Domain, (CertChainPem, KeyPem)>>,
+    /// tokens for ACME challenged
+    pending_challenges: Mutex<HashMap<AcmeToken, KeyAuthorization>>,
+
+    config: Arc<ServerConfig>,
+    resolver: Arc<Resolver>,
+}
+
+impl PortoTLS {
+    pub fn init(config: &PortoConfig, peers: PeerTable) -> Result<Self> {
+        let path = config
+            .credentials
+            .clone()
+            .ok_or_else(|| anyhow!("no credentials path provided"))?;
+
+        debug!("initializing TLS Service");
+        debug!(path = %path.display());
+        debug!(%peers);
+
+        // Build TLS configuration.
+
+        // this should crash the program if called twice
+        rustls::crypto::aws_lc_rs::default_provider()
+            .install_default()
+            .map_err(|_| anyhow!("error when setting default crypto provider"))?;
+
+        let resolver = Arc::new(Resolver::new());
+        let mut server_config = ServerConfig::builder()
+            .with_no_client_auth()
+            .with_cert_resolver(resolver.clone());
+
+        // Enable ALPN protocols to support both HTTP/2 and HTTP/1.1
+        server_config.alpn_protocols =
+            vec![b"h2".to_vec(), b"http/1.1".to_vec(), b"http/1.0".to_vec()];
+
+        Ok(PortoTLS {
+            inner: Arc::new(PortoTLSInner {
+                cred_path: path,
+                peers,
+                certs: Mutex::new(HashMap::new()),
+                pending_challenges: Mutex::new(HashMap::new()),
+
+                resolver,
+                config: Arc::new(server_config),
+            }),
+        })
+    }
+
+    /// check for expired certificates inside the in-memory cache
+    fn check_certs(&self) -> Option<Vec<Domain>> {
+        debug!("checking certs");
+
+        let guard = self.inner.certs.lock();
+
+        let expired_domains: Vec<_> = guard
+            .iter()
+            .filter(|e| should_renew(&e.1.0))
+            .map(|e| e.0.clone())
+            .collect();
+
+        if !expired_domains.is_empty() {
+            debug!(?expired_domains, "expired certs found");
+            Some(expired_domains)
+        } else {
+            None
+        }
+    }
+
+    /// checks the peer list to see if we have a certificate
+    fn check_new_domains(&self) -> Option<Vec<Domain>> {
+        debug!("checking for new domains");
+
+        let guard = self.inner.certs.lock();
+
+        let new_domains: Vec<_> = self
+            .inner
+            .peers
+            .get_domains()
+            .into_iter()
+            .filter(|d| !guard.contains_key(d))
+            .collect();
+
+        if !new_domains.is_empty() {
+            debug!(?new_domains, "non registered domains found");
+            Some(new_domains)
+        } else {
+            None
+        }
+    }
+
+    fn add_to_resolver(&self, domain: &Domain, certs: CertChainPem, key: KeyPem) -> Result<()> {
+        debug!(%domain, "adding domain to resolver");
+
+        if is_expired(&certs) {
+            return Err(anyhow!("cant register expired certificates!"));
+        }
+
+        let certs = CertificateDer::pem_slice_iter(certs.as_str().as_bytes())
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| anyhow!("could not read certificate: {e}"))?;
+
+        let key = PrivateKeyDer::from_pem_slice(key.as_str().as_bytes())
+            .map_err(|e| anyhow!("could not read key: {e}"))?;
+
+        let provider = rustls::crypto::aws_lc_rs::default_provider();
+        let ck = CertifiedKey::from_der(certs, key, &provider)?;
+
+        self.inner.resolver.add(domain, ck)?;
+        Ok(())
+    }
+
+    pub fn get_acceptor(&self) -> TlsAcceptor {
+        TlsAcceptor::from(self.inner.config.clone())
+    }
+
+    fn load_certs_from_file(&self) -> Result<()> {
+        let path = &self.inner.cred_path;
+        debug!(?path, "loading certs from file");
+
+        let cert = load_pem_file(path.join(CERT_FILENAME))?;
+        let cert = cert.parse_x509()?;
+
+        let key = load_pem_file(path.join(KEY_FILENAME))?;
+        let key = key.parse_x509()?;
+
+        debug!(issuer = %cert.issuer(), "found certificate");
+        todo!()
+    }
+}
+
+enum AcmeWorkerMode {
+    Debug,
+    Prod,
+}
+
+async fn acme_worker(store: PortoTLS, mode: AcmeWorkerMode) {
+    match mode {
+        AcmeWorkerMode::Debug => {
+            let account = get_acme_test_acc().await.unwrap();
+
+            match store.load_certs_from_file() {
+                Ok(_) => info!("loaded certs from file"),
+                Err(e) => warn!(%e, "couldnt load certs from file"),
+            };
+
+            if let Some(domains) = store.check_new_domains() {
+                let _ = issue_order(store.clone(), &account, &domains)
+                    .await
+                    .inspect_err(|e| error!(%e, "ACME error"));
+            };
+        }
+        AcmeWorkerMode::Prod => {
+            let account = get_acme_acc(&store.inner.cred_path).await.unwrap();
+            let mut timer = tokio::time::interval(Duration::from_hours(CHECK_INTERVAL_HOURS));
+
+            loop {
+                timer.tick().await;
+
+                // TODO: some sort watcher channel for newly added domains when the server is running
+
+                if let Some(domains) = store.check_new_domains()
+                    && let Err(e) = issue_order(store.clone(), &account, &domains).await
+                {
+                    error!(%e, "ACME error");
+                };
+
+                if let Some(domains) = store.check_certs()
+                    && let Err(e) = issue_order(store.clone(), &account, &domains).await
+                {
+                    error!(%e, "ACME error");
+                };
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use hyper::server::conn::http1::Builder;
+    use hyper_util::rt::TokioIo;
+    use hyper_util::service::TowerToHyperService;
+    use tokio::io::AsyncWriteExt;
+    use tracing_subscriber::EnvFilter;
+
+    use super::*;
+    use challenge::*;
+
+    #[tokio::test]
+    async fn acme_test() -> Result<()> {
+        /*
+        HOW TO TEST:
+
+        - start acme server: docker compose up
+        - curl with: curl --http1.1 --resolve acmetest.com:5002:127.0.0.1 https://acmetest.com:5002 -k -v
+
+        */
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                EnvFilter::try_from_default_env()
+                    .or_else(|_| EnvFilter::try_new("proxy=error,tower_http=warn"))?,
+            )
+            .init();
+
+        let mut config = PortoConfig::default();
+        config.debug = true;
+        config.credentials = Some(PathBuf::from("credentials"));
+
+        let addr = "0.0.0.0:5002"; // port for pebble ACME server
+
+        let domains = PeerTable::try_from(&[("acmetest.com", "1.1.1.1:6767")])?;
+
+        let listener = tokio::net::TcpListener::bind(addr).await?;
+        let tls = PortoTLS::init(&config, domains).unwrap();
+        let service =
+            TowerToHyperService::new(Http1ChallSvc::init(tls.clone(), AcmeWorkerMode::Debug));
+
+        info!("test ACME server listening on {addr}");
+
+        while let Ok((con, _)) = listener.accept().await {
+            if is_tls(&con).await {
+                debug!("we got a TLS connection");
+                let acceptor = tls.get_acceptor();
+                match acceptor.accept(con).await {
+                    Ok(mut s) => {
+                        debug!("TLS established");
+                        let _ = s.write_all(b"HTTP/1.1 200 OK\r\n\r\n").await;
+                    }
+                    Err(e) => error!(%e, "error when accepting TLS"),
+                };
+                continue;
+            }
+
+            let stream = TokioIo::new(con);
+            let builder = Builder::new();
+            builder.serve_connection(stream, service.clone()).await?;
+        }
+        Ok(())
+    }
+}

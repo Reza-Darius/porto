@@ -18,18 +18,6 @@ pub struct ResponseCache<S> {
     inner: S,
 }
 
-/*
-* Services are permitted to panic if call is invoked without obtaining Poll::Ready(Ok(())) from poll_ready.
-* You should therefore be careful when cloning services for example to move them into boxed futures.
-* Even though the original service is ready, the clone might not be.
-*/
-/// helper function to safely clone a svc, see comment
-fn svc_clone<S: Clone + Sized>(inner: &mut S) -> S {
-    let clone = inner.clone();
-    // take the service that was ready
-    std::mem::replace(inner, clone)
-}
-
 impl<S, B> Service<Request<B>> for ResponseCache<S>
 where
     S: Service<Request<B>, Response = Response<Body>> + Send + 'static + Clone,
@@ -128,7 +116,7 @@ where
                                 resp = Response::from_parts(parts, body);
                             }
                         } else {
-                            debug!("not storable");
+                            debug!("response is deemed not storable");
                         }
                         return Ok(resp);
                     }
@@ -144,6 +132,7 @@ where
                 let new_policy = CachePolicy::new(&req_parts, &resp);
                 if new_policy.is_storable() {
                     debug!("inserting new cache entry");
+
                     let (resp_parts, resp_body) = resp.into_parts();
                     let body = resp_body.collect().await?.to_bytes();
                     store.inner.store.insert(
@@ -228,13 +217,14 @@ impl Borrow<str> for CacheKey {
 
 impl CacheKey {
     fn from_req<B>(req: &Request<B>) -> Result<Self, CacheError> {
+        // key = method + ":" + host + path + "?" + query
         let mut key: String = String::new();
 
-        // key = method + ":" + host + path + "?" + query
         key.push_str(req.method().as_str());
         key.push(':');
+
         // alternatively get PeerAddr from extension
-        key.push_str(get_target_host(req).ok_or_else(|| CacheError::CantCreateKey)?);
+        key.push_str(get_target_host(req).ok_or(CacheError::CantCreateKey)?);
         key.push_str(req.uri().path());
 
         if let Some(query) = req.uri().query() {

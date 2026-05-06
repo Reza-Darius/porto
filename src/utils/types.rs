@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 
 use addr::parse_domain_name;
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use derive_more::{AsRef, Display, Eq, From};
 use http::Version;
 use http_body_util::combinators::BoxBody;
@@ -191,8 +191,9 @@ impl TryFrom<http::Uri> for PeerAddr {
     fn try_from(value: http::Uri) -> std::result::Result<Self, Self::Error> {
         value
             .authority()
-            .and_then(|host| PeerAddr::try_from(host.as_str()).ok())
-            .ok_or_else(|| anyhow!("couldnt convert URI to peeraddr {value:?}"))
+            .ok_or_else(|| anyhow!("no authority found"))
+            .and_then(|host| PeerAddr::try_from(host.as_str()))
+            .with_context(|| anyhow!("couldnt convert URI to peeraddr {value:?}"))
     }
 }
 
@@ -246,10 +247,11 @@ pub struct Domain(Arc<str>);
 
 impl Domain {
     pub fn parse(domain: impl AsRef<str>) -> Result<Self> {
-        parse_domain_name(domain.as_ref())
+        let domain = domain.as_ref();
+        parse_domain_name(domain)
             .map_err(|e| anyhow!("{e}"))?
             .root()
-            .ok_or_else(|| anyhow!("couldnt extract root from domain name"))
+            .ok_or_else(|| anyhow!("couldnt extract root from domain {domain}"))
             .map(|domain| Domain(Arc::from(domain)))
     }
 

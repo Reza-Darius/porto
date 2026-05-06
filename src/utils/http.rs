@@ -53,29 +53,27 @@ pub async fn shutdown_signal() {
         .expect("failed to install CTRL+C signal handler");
 }
 
+/// helper function to build a response
 pub fn response(status: StatusCode) -> Response<Body> {
-    Response::builder().status(status).body(empty()).unwrap()
+    Response::builder()
+        .status(status)
+        .body(empty())
+        .expect("the values are hard coded")
 }
 
+/// helper function to build a response
 pub fn bad_request() -> Response<Body> {
-    Response::builder()
-        .status(StatusCode::BAD_REQUEST)
-        .body(empty())
-        .unwrap()
+    response(StatusCode::BAD_REQUEST)
 }
 
+/// helper function to build a response
 pub fn not_found() -> Response<Body> {
-    Response::builder()
-        .status(StatusCode::NOT_FOUND)
-        .body(empty())
-        .unwrap()
+    response(StatusCode::NOT_FOUND)
 }
 
+/// helper function to build a response
 pub fn internal_error() -> Response<Body> {
-    Response::builder()
-        .status(StatusCode::INTERNAL_SERVER_ERROR)
-        .body(empty())
-        .unwrap()
+    response(StatusCode::INTERNAL_SERVER_ERROR)
 }
 
 /// retrieves the targeted host from the request
