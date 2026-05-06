@@ -65,22 +65,8 @@ impl PortoTLS {
         debug!(path = %path.display());
         debug!(%peers);
 
-        // Build TLS configuration.
-
-        // this should crash the program if called twice
-        rustls::crypto::aws_lc_rs::default_provider()
-            .install_default()
-            .map_err(|_| anyhow!("error when setting default crypto provider"))?;
-
         let resolver = Arc::new(Resolver::new());
-        let mut server_config = ServerConfig::builder()
-            .with_no_client_auth()
-            .with_cert_resolver(resolver.clone());
-
-        // Enable ALPN protocols to support both HTTP/2 and HTTP/1.1
-        server_config.alpn_protocols =
-            vec![b"h2".to_vec(), b"http/1.1".to_vec(), b"http/1.0".to_vec()];
-
+        let server_config = setup_rustls_config(resolver.clone());
         let account = get_account(config.debug, &path).await?;
 
         Ok(PortoTLS {
@@ -168,13 +154,16 @@ impl PortoTLS {
         let path = &self.inner.cred_path;
         debug!(?path, "loading certs from file");
 
-        let cert = load_pem_file(path.join(CERT_FILENAME))?;
-        let cert = cert.parse_x509()?;
+        // TODO: read existing certs from file and map them to domains
 
-        let key = load_pem_file(path.join(KEY_FILENAME))?;
-        let key = key.parse_x509()?;
+        let cert_pem = read_pem_file(path.join(CERT_FILENAME))?;
+        let cert = cert_pem.parse_x509()?;
+
+        let key_pem = read_pem_file(path.join(KEY_FILENAME))?;
+        let key = key_pem.parse_x509()?;
 
         debug!(issuer = %cert.issuer(), "found certificate");
+
         todo!()
     }
 }
@@ -187,6 +176,7 @@ enum AcmeWorkerMode {
 async fn acme_worker(store: PortoTLS, mode: AcmeWorkerMode) {
     match mode {
         AcmeWorkerMode::Debug => {
+            // maybe move this into init?
             match store.load_certs_from_file() {
                 Ok(_) => info!("loaded certs from file"),
                 Err(e) => warn!(%e, "couldnt load certs from file"),
