@@ -10,7 +10,7 @@ use crate::{
     utils::*,
 };
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Http1ChallSvc {
     store: PortoTLS,
 }

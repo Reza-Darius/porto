@@ -13,10 +13,11 @@ use crate::{
 
 /// Create the ACME order based on the given domain names. Inserts them on success
 #[instrument(err, skip_all, fields(domains = ?domains))]
-pub async fn issue_order(store: PortoTLS, account: &Account, domains: &[Domain]) -> Result<()> {
+pub async fn issue_order(store: PortoTLS, domains: &[Domain]) -> Result<()> {
     info!("issuing new ACME order");
 
     let domains: Vec<_> = domains.to_vec();
+    let account = &store.inner.account;
 
     let identifier: Vec<_> = domains
         .iter()

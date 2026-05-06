@@ -8,17 +8,15 @@ mod resolver;
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Result, anyhow};
-use instant_acme::KeyAuthorization;
+use instant_acme::{Account, KeyAuthorization};
 use parking_lot::Mutex;
 use rustls::{
     ServerConfig,
     pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
     sign::CertifiedKey,
 };
-use time::OffsetDateTime;
 use tokio_rustls::TlsAcceptor;
 use tracing::{debug, error, info, warn};
-use x509_parser::pem::parse_x509_pem;
 
 use crate::{config::PortoConfig, utils::*};
 use account::*;
@@ -34,14 +32,16 @@ const CERT_FILENAME: &str = "acme_cert.pem";
 const KEY_FILENAME: &str = "acme_key.pem";
 
 /// clonable handler
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct PortoTLS {
     inner: Arc<PortoTLSInner>,
 }
 
-#[derive(Debug)]
 struct PortoTLSInner {
+    /// path to credentials
     cred_path: PathBuf,
+    /// ACME account
+    account: Account,
     /// table of registered domains in the proxy
     peers: PeerTable,
     /// in memory cache
@@ -49,12 +49,13 @@ struct PortoTLSInner {
     /// tokens for ACME challenged
     pending_challenges: Mutex<HashMap<AcmeToken, KeyAuthorization>>,
 
+    // these need to be arcs
     config: Arc<ServerConfig>,
     resolver: Arc<Resolver>,
 }
 
 impl PortoTLS {
-    pub fn init(config: &PortoConfig, peers: PeerTable) -> Result<Self> {
+    pub async fn init(config: &PortoConfig, peers: PeerTable) -> Result<Self> {
         let path = config
             .credentials
             .clone()
@@ -80,9 +81,12 @@ impl PortoTLS {
         server_config.alpn_protocols =
             vec![b"h2".to_vec(), b"http/1.1".to_vec(), b"http/1.0".to_vec()];
 
+        let account = get_account(config.debug, &path).await?;
+
         Ok(PortoTLS {
             inner: Arc::new(PortoTLSInner {
                 cred_path: path,
+                account,
                 peers,
                 certs: Mutex::new(HashMap::new()),
                 pending_challenges: Mutex::new(HashMap::new()),
@@ -183,21 +187,18 @@ enum AcmeWorkerMode {
 async fn acme_worker(store: PortoTLS, mode: AcmeWorkerMode) {
     match mode {
         AcmeWorkerMode::Debug => {
-            let account = get_acme_test_acc().await.unwrap();
-
             match store.load_certs_from_file() {
                 Ok(_) => info!("loaded certs from file"),
                 Err(e) => warn!(%e, "couldnt load certs from file"),
             };
 
             if let Some(domains) = store.check_new_domains() {
-                let _ = issue_order(store.clone(), &account, &domains)
+                let _ = issue_order(store.clone(), &domains)
                     .await
                     .inspect_err(|e| error!(%e, "ACME error"));
             };
         }
         AcmeWorkerMode::Prod => {
-            let account = get_account(&store.inner.cred_path).await.unwrap();
             let mut timer = tokio::time::interval(Duration::from_hours(CHECK_INTERVAL_HOURS));
 
             loop {
@@ -206,13 +207,13 @@ async fn acme_worker(store: PortoTLS, mode: AcmeWorkerMode) {
                 // TODO: some sort watcher channel for newly added domains when the server is running
 
                 if let Some(domains) = store.check_new_domains()
-                    && let Err(e) = issue_order(store.clone(), &account, &domains).await
+                    && let Err(e) = issue_order(store.clone(), &domains).await
                 {
                     error!(%e, "ACME error");
                 };
 
                 if let Some(domains) = store.check_certs()
-                    && let Err(e) = issue_order(store.clone(), &account, &domains).await
+                    && let Err(e) = issue_order(store.clone(), &domains).await
                 {
                     error!(%e, "ACME error");
                 };
@@ -258,7 +259,7 @@ mod tests {
         let domains = PeerTable::try_from(&[("acmetest.com", "1.1.1.1:6767")])?;
 
         let listener = tokio::net::TcpListener::bind(addr).await?;
-        let tls = PortoTLS::init(&config, domains).unwrap();
+        let tls = PortoTLS::init(&config, domains).await.unwrap();
         let service =
             TowerToHyperService::new(Http1ChallSvc::init(tls.clone(), AcmeWorkerMode::Debug));
 
