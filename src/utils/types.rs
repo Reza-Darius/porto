@@ -12,6 +12,7 @@ use std::sync::atomic::AtomicU64;
 use addr::parse_domain_name;
 use anyhow::{Result, anyhow};
 use derive_more::{AsRef, Display, Eq, From};
+use http::Version;
 use http_body_util::combinators::BoxBody;
 use hyper::body::{Bytes, Incoming};
 use hyper::{Request, Response};
@@ -118,12 +119,6 @@ impl Peer {
     }
 }
 
-pub struct PeerInner {
-    pub addr: PeerAddr,
-    pub alive: bool,
-    pub http_prot: PeerProto,
-}
-
 impl<const N: usize> TryFrom<&[(&str, &str); N]> for PeerTable {
     type Error = anyhow::Error;
 
@@ -167,6 +162,15 @@ pub enum PeerProto {
     #[default]
     Http1,
     Http2,
+}
+
+impl PeerProto {
+    pub fn to_ver(&self) -> http::Version {
+        match self {
+            PeerProto::Http1 => Version::HTTP_11,
+            PeerProto::Http2 => Version::HTTP_2,
+        }
+    }
 }
 
 impl<'de> Deserialize<'de> for PeerAddr {
@@ -320,4 +324,16 @@ pub async fn is_tls(stream: &TcpStream) -> bool {
         Ok(1) => peek_buf[0] == 0x16,
         _ => false,
     }
+}
+
+/*
+* Services are permitted to panic if call is invoked without obtaining Poll::Ready(Ok(())) from poll_ready.
+* You should therefore be careful when cloning services for example to move them into boxed futures.
+* Even though the original service is ready, the clone might not be.
+*/
+/// helper function to safely clone a service, see comment
+pub fn svc_clone<S: Clone + Sized>(inner: &mut S) -> S {
+    let clone = inner.clone();
+    // take the service that was ready
+    std::mem::replace(inner, clone)
 }

@@ -24,7 +24,9 @@ use tracing::{debug, info};
 use crate::{
     config::PortoConfig,
     services::{
-        addr::AddrServiceLayer, cache::ResponseCacheLayer, connection_table::ConnectionService,
+        addr::AddrServiceLayer,
+        cache::ResponseCacheLayer,
+        connection_table::{ConnectionService, PoolConfig},
     },
     utils::{Body, HyperService, PeerAddr, PeerTable, response},
 };
@@ -36,6 +38,7 @@ mod cache;
 mod connection_table;
 mod connector;
 mod health;
+mod http_con;
 mod proxy;
 mod upstream;
 mod upstream2;
@@ -52,7 +55,7 @@ pub fn setup_service(config: &PortoConfig) -> HyperService {
         ))
         .layer(CompressionLayer::new().gzip(true))
         .layer(AddrServiceLayer::new(table))
-        .layer(ResponseCacheLayer::new());
+        .layer(ResponseCacheLayer::new(1024));
 
     service
         .service(upstream::UpstreamService::new())
@@ -283,13 +286,13 @@ pub fn setup_service4(config: &PortoConfig) -> HyperService {
         ))
         .layer(CompressionLayer::new().gzip(true))
         .layer(AddrServiceLayer::new(table))
-        .layer(ResponseCacheLayer::new())
-        .service(ConnectionService::new());
+        .layer(ResponseCacheLayer::new(1024))
+        .service(ConnectionService::new(PoolConfig::default()));
 
     // erasing types
     tower
-        .map_response(|resp| resp.map(|body| body.boxed()))
         .map_response(|resp| {
+            let resp = resp.map(|body| body.boxed());
             info!("sending {resp:?}");
             resp
         })

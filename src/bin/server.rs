@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 use anyhow::Result;
 use hyper::Request;
 use hyper_util::rt::TokioExecutor;
-use hyper_util::server::conn::auto::{Builder, Http1Builder};
+use hyper_util::server::conn::auto::Builder;
 use hyper_util::server::graceful::Watcher;
 use hyper_util::{rt::TokioIo, service::TowerToHyperService};
 use std::time::Instant;

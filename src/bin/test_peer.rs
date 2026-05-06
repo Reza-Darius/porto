@@ -1,20 +1,19 @@
-use std::{ops::Deref, os::unix::net::UnixListener};
+use std::ops::Deref;
 
 use anyhow::Result;
 use axum::{
     Router,
     body::Body,
     extract::Request,
-    handler::HandlerWithoutStateExt,
     response::{IntoResponse, Response},
     routing::get,
 };
 use http::StatusCode;
 use http::header::CACHE_CONTROL;
-use hyper::{server::conn::http1, service::service_fn};
+use hyper::server::conn::http1;
 use hyper_util::{rt::TokioIo, service::TowerToHyperService};
 use porto::utils::{PeerAddr, PeerAddrInner, setup_tracing};
-use tokio::{fs, task::JoinSet};
+use tokio::task::JoinSet;
 use tracing::{error, info};
 
 #[tokio::main]
@@ -75,7 +74,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn hyper(req: hyper::Request<hyper::body::Incoming>) -> http::Response<porto::utils::Body> {
+async fn _hyper(_: hyper::Request<hyper::body::Incoming>) -> http::Response<porto::utils::Body> {
     todo!()
 }
 

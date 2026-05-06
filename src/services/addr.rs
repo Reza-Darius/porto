@@ -1,7 +1,11 @@
-use std::{str::FromStr, task::Poll};
+use std::{
+    str::FromStr,
+    task::{Poll, ready},
+};
 
 use anyhow::anyhow;
 use http::{Uri, Version, uri::Authority};
+use http_cache_semantics::RequestLike;
 use hyper::{Request, Response, StatusCode};
 use hyperlocal::Uri as UdsUri;
 use pin_project_lite::pin_project;
@@ -53,7 +57,7 @@ where
         let (mut parts, body) = req.into_parts();
         debug!(?parts, "rewriting request");
 
-        let Some(req_host) = get_host(&parts) else {
+        let Some(req_host) = get_host_from_parts(&parts) else {
             debug!("no host header found on request");
             return AddrFuture::Error {
                 code: StatusCode::BAD_REQUEST,
@@ -61,11 +65,19 @@ where
         };
 
         let Some(peer) = self.table.get_peer(req_host) else {
-            debug!(requested_host = %req_host, "coulndnt retrieve socket name");
+            debug!(requested_host = %req_host, "no peer found");
             return AddrFuture::Error {
                 code: StatusCode::NOT_FOUND,
             };
         };
+
+        // overwrite host header in case the upstream expects http1
+        if parts.version == Version::HTTP_2 && peer.prot == PeerProto::Http1 {
+            parts.headers.insert(
+                hyper::header::HOST,
+                hyper::header::HeaderValue::from_str(req_host).unwrap(),
+            );
+        }
 
         // rewrite URI
         parts.uri = match uri_absolute(&parts, &peer.addr) {
@@ -82,13 +94,15 @@ where
 
         let mut req = Request::from_parts(parts, body);
 
-        insert_forward_header(&mut req);
+        adjust_header(&mut req);
 
         // we embed the peer in the request for subsequent services
+        let client_expect = req.version();
         req.extensions_mut().insert(peer);
 
         AddrFuture::Service {
             fut: self.inner.call(req),
+            client_expect,
         }
     }
 }
@@ -132,7 +146,8 @@ fn uri_origin(parts: &http::request::Parts) -> anyhow::Result<Uri> {
 pin_project! {
     #[project = EnumProj]
     pub enum AddrFuture<F> {
-        Service {#[pin] fut: F},
+        // the response future and the protocol we need to map it to
+        Service {#[pin] fut: F, client_expect: Version},
         Error{code: StatusCode},
     }
 }
@@ -150,7 +165,16 @@ where
     ) -> std::task::Poll<Self::Output> {
         let this = self.project();
         match this {
-            EnumProj::Service { fut } => fut.poll(cx).map_err(Into::into),
+            EnumProj::Service { fut, client_expect } => {
+                let mut resp = ready!(fut.poll(cx).map_err(Into::into))?;
+
+                // when the client expects HTTP2 but our backend responded with HTTP1
+                if resp.version() == Version::HTTP_11 && *client_expect == Version::HTTP_2 {
+                    strip_illegal_http2_header(resp.headers_mut());
+                }
+
+                Poll::Ready(Ok(resp))
+            }
             EnumProj::Error { code } => Poll::Ready(Ok(response(*code))),
         }
     }

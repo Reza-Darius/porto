@@ -21,22 +21,43 @@ use crate::{
     utils::{Body, BoxFut, Peer, PeerAddr, response},
 };
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ConnectionService {
     table: Arc<Mutex<HashMap<PeerAddr, HttpClient>>>,
+    config: Arc<PoolConfig>,
 }
 
-struct PoolConfig {
-    max_in_flight: u16,
-    max_http1_con: u16,
-    max_http2_con: u16,
+pub struct PoolConfig {
+    /// max number of concurrent handshakes
+    pub max_http1_in_flight: u16,
+    /// max number of connections per client
+    pub max_http1_con: u16,
+
+    /// when to drop idle connections
+    pub idle_timeout: Duration,
+    /// timeout check interval
+    pub to_check_int: Duration,
+}
+
+impl Default for PoolConfig {
+    fn default() -> Self {
+        PoolConfig {
+            max_http1_in_flight: 10,
+            max_http1_con: 32,
+            idle_timeout: Duration::from_secs(30),
+            to_check_int: Duration::from_secs(30),
+        }
+    }
 }
 
 // TODO: take configuration
 impl ConnectionService {
-    pub fn new() -> Self {
+    pub fn new(config: PoolConfig) -> Self {
         let table = Arc::new(Mutex::new(HashMap::new()));
-        ConnectionService { table }
+        ConnectionService {
+            table,
+            config: Arc::new(config),
+        }
     }
 }
 
@@ -64,16 +85,15 @@ impl Service<Request<Incoming>> for ConnectionService {
             // initialize a fresh client
             std::collections::hash_map::Entry::Vacant(vacant_entry) => {
                 let addr = vacant_entry.key().clone();
-                let handle = self.table.clone();
 
                 debug!(%addr, "initializing fresh client");
 
                 match prot {
                     crate::utils::PeerProto::Http1 => {
-                        vacant_entry.insert(new_http1_client(addr, handle)).clone()
+                        vacant_entry.insert(new_http1_client(addr, self)).clone()
                     }
                     crate::utils::PeerProto::Http2 => {
-                        vacant_entry.insert(new_http2_client(addr, handle)).clone()
+                        vacant_entry.insert(new_http2_client(addr, self)).clone()
                     }
                 }
             }
@@ -82,17 +102,21 @@ impl Service<Request<Incoming>> for ConnectionService {
     }
 }
 
+/// calling this service sends a request over HTTP
 type HttpClient = BoxCloneService<Request<Incoming>, Response<Body>, BoxError>;
 
-fn new_http1_client(
-    addr: PeerAddr,
-    handle: Arc<Mutex<HashMap<PeerAddr, HttpClient>>>,
-) -> HttpClient {
+/// register a new HTTP1 client
+fn new_http1_client(addr: PeerAddr, pool: &ConnectionService) -> HttpClient {
+    let handle = pool.table.clone();
+    let to_interval = pool.config.to_check_int;
+    let to_dur = pool.config.idle_timeout;
+
     let http1con = ServiceBuilder::new()
         .concurrency_limit(10) // limits the amount of in-flight handshakes
         .layer_fn(|con| Http1Connector::new(32, con))
         .service(UpstreamConnector::new());
 
+    // we use a cache to dynamically open new connections in a pool
     let http1 = hyper_util::client::pool::cache::builder()
         .executor(hyper_util::rt::TokioExecutor::new())
         .build(http1con);
@@ -101,8 +125,7 @@ fn new_http1_client(
 
     // background worker to time out idle connections
     tokio::spawn(async move {
-        let mut timeout_check = tokio::time::interval(Duration::from_secs(30));
-        let idle_dur = Duration::from_secs(20);
+        let mut timeout_check = tokio::time::interval(to_interval);
 
         // the first tick completes instantly
         timeout_check.tick().await;
@@ -118,13 +141,13 @@ fn new_http1_client(
                 if sender.sender.is_closed() {
                     return false;
                 }
-                now < sender.last_used + idle_dur
+                now < sender.last_used + to_dur
             });
         }
     });
 
     // wrapper service to avoide double service calls and because "Cache" isnt nameable
-    let http1con = service_fn(move |req: Request<_>| {
+    let http1 = service_fn(move |req: Request<_>| {
         let mut http1_svc = http1.clone();
         async move {
             debug!("calling connector");
@@ -151,24 +174,27 @@ fn new_http1_client(
             })
         }
     });
-    http1con.boxed_clone()
+    http1.boxed_clone()
 }
 
-fn new_http2_client(
-    addr: PeerAddr,
-    handle: Arc<Mutex<HashMap<PeerAddr, HttpClient>>>,
-) -> HttpClient {
+/// register a new HTTP2 client
+fn new_http2_client(addr: PeerAddr, pool: &ConnectionService) -> HttpClient {
+    let handle = pool.table.clone();
+    let to_interval = pool.config.to_check_int;
+    let to_dur = pool.config.idle_timeout;
+
     let http2 = ServiceBuilder::new()
         .layer_fn(Http2Connector::new)
         .service(UpstreamConnector::new());
+
+    // we use a singleton to multiplex HTTP2 over a single connection
     let http2 = Singleton::new(http2);
 
     let mut worker_clone = http2.clone();
 
     // background worker to time out idle connections
     tokio::spawn(async move {
-        let mut timeout_check = tokio::time::interval(Duration::from_secs(30));
-        let idle_dur = Duration::from_secs(20);
+        let mut timeout_check = tokio::time::interval(to_interval);
 
         // the first tick completes instantly
         timeout_check.tick().await;
@@ -184,13 +210,13 @@ fn new_http2_client(
                 if sender.sender.is_closed() {
                     return false;
                 }
-                now < sender.last_used + idle_dur
+                now < sender.last_used + to_dur
             });
         }
     });
 
     // wrapper service to avoide double service calls and because "Singleton" isnt nameable
-    let http2con = service_fn(move |req: Request<_>| {
+    let http2 = service_fn(move |req: Request<_>| {
         let mut http2_svc = http2.clone();
         async move {
             debug!("calling connector");
@@ -217,5 +243,5 @@ fn new_http2_client(
             })
         }
     });
-    http2con.boxed_clone()
+    http2.boxed_clone()
 }

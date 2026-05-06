@@ -13,7 +13,7 @@ use crate::utils::{Domain, PeerAddr};
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
-pub struct Args {
+pub struct Cli {
     /// Addr and port for Porto to listen on
     addr: Option<SocketAddr>,
 
@@ -37,13 +37,8 @@ pub struct PortoConfig {
     proxy: Vec<ProxyConfig>,
 
     #[serde(skip)]
-    pub service: ServiceConfig,
-    #[serde(skip)]
     pub debug: bool,
 }
-
-#[derive(Debug, Default)]
-struct ServiceConfig {}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct ProxyConfig {
@@ -71,7 +66,7 @@ const fn default_tls() -> bool {
 
 #[instrument(err)]
 pub fn setup_config() -> Result<PortoConfig> {
-    let args = Args::parse();
+    let args = Cli::parse();
     let path = args
         .config
         .unwrap_or_else(|| PathBuf::from(CONFIG_FILENAME));

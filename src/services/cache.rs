@@ -18,6 +18,18 @@ pub struct ResponseCache<S> {
     inner: S,
 }
 
+/*
+* Services are permitted to panic if call is invoked without obtaining Poll::Ready(Ok(())) from poll_ready.
+* You should therefore be careful when cloning services for example to move them into boxed futures.
+* Even though the original service is ready, the clone might not be.
+*/
+/// helper function to safely clone a svc, see comment
+fn svc_clone<S: Clone + Sized>(inner: &mut S) -> S {
+    let clone = inner.clone();
+    // take the service that was ready
+    std::mem::replace(inner, clone)
+}
+
 impl<S, B> Service<Request<B>> for ResponseCache<S>
 where
     S: Service<Request<B>, Response = Response<Body>> + Send + 'static + Clone,
@@ -39,15 +51,7 @@ where
     #[allow(clippy::needless_return)]
     fn call(&mut self, req: Request<B>) -> Self::Future {
         let store = self.store.clone();
-
-        /*
-         * Services are permitted to panic if call is invoked without obtaining Poll::Ready(Ok(())) from poll_ready.
-         * You should therefore be careful when cloning services for example to move them into boxed futures.
-         * Even though the original service is ready, the clone might not be.
-         */
-        let clone = self.inner.clone();
-        // take the service that was ready
-        let mut svc = std::mem::replace(&mut self.inner, clone);
+        let mut svc = svc_clone(&mut self.inner);
 
         Box::pin(async move {
             let Ok(key) = CacheKey::from_req(&req) else {
@@ -68,7 +72,7 @@ where
                     http_cache_semantics::BeforeRequest::Stale { mut request, .. } => {
                         debug!(?request, "cache calling service");
 
-                        // we have to carry over the PeerAddr extension
+                        // we have to carry over the Peer extension
                         request.extensions.insert(
                             req_parts
                                 .extensions
@@ -166,9 +170,9 @@ pub struct ResponseCacheLayer {
 }
 
 impl ResponseCacheLayer {
-    pub fn new() -> Self {
+    pub fn new(cap: usize) -> Self {
         ResponseCacheLayer {
-            cache: Store::new(),
+            cache: Store::new(cap),
         }
     }
 }
@@ -190,8 +194,8 @@ struct Store {
 }
 
 impl Store {
-    pub fn new() -> Self {
-        let cache = CacheBuilder::new(1024)
+    pub fn new(cap: usize) -> Self {
+        let cache = CacheBuilder::new(cap)
             .with_eviction_config(EvictionConfig::Lru(LruConfig {
                 high_priority_pool_ratio: 0.8,
             }))

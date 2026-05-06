@@ -87,7 +87,7 @@ impl<T> Queue<T> {
         self.len as usize
     }
 
-    pub fn iter(&self) -> QueueRefIter<T> {
+    pub fn iter(&self) -> QueueRefIter<'_, T> {
         QueueRefIter {
             data: &self.data,
             tail: self.tail,
@@ -107,7 +107,7 @@ impl<T> Queue<T> {
 impl<T> Drop for Queue<T> {
     fn drop(&mut self) {
         if std::mem::needs_drop::<T>() {
-            while let Some(_) = self.pop() {}
+            while self.pop().is_some() {}
         }
     }
 }
@@ -118,7 +118,8 @@ impl<T: Clone> Clone for Queue<T> {
 
         for i in 0..self.len {
             let idx = (self.tail + i as usize) % new.cap as usize;
-            new.push(unsafe { self.data[idx].assume_init_ref().clone() });
+            new.push(unsafe { self.data[idx].assume_init_ref().clone() })
+                .expect("this cant fail because only clone over n < cap elements");
         }
         new
     }
@@ -157,7 +158,7 @@ impl<'a, T> Iterator for QueueRefIter<'a, T> {
     type Item = &'a T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut idx = self.tail % self.cap as usize;
+        let idx = self.tail % self.cap as usize;
         if self.tail < self.len as usize {
             // SAFETY:
             // tail always follows head so data is never uninitialized
@@ -180,6 +181,7 @@ impl Drop for MyElement {
 
 #[cfg(test)]
 mod tests {
+    #![allow(unused_results)]
     use super::*;
 
     #[test]
@@ -239,6 +241,7 @@ mod tests {
         }
         assert!(iter.next().is_none());
     }
+
     #[test]
     fn queue_test_clone() {
         let mut q = Queue::new(10);
