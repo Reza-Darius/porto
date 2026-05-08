@@ -8,24 +8,33 @@ use std::{
 use anyhow::anyhow;
 use http::{Request, Response, StatusCode};
 use hyper::body::Incoming;
-use hyper_util::client::pool::singleton::Singleton;
+use hyper_util::{
+    client::pool::{self, cache, map, negotiate, singleton::Singleton},
+    rt::TokioExecutor,
+};
 use parking_lot::Mutex;
-use tower::{BoxError, Service, ServiceBuilder, ServiceExt, service_fn, util::BoxCloneService};
+use tower::{
+    BoxError, Service, ServiceBuilder, ServiceExt, layer::layer_fn, service_fn,
+    util::BoxCloneService,
+};
 use tracing::{debug, error, trace};
 
 use super::{
     connector::UpstreamConnector,
-    http::{Http1Connector, Http2Connector},
+    http::{Http1Connect, Http2Connect},
 };
-use crate::utils::{Body, BoxFut, Peer, PeerAddr, response};
+use crate::{
+    services::upstream::connector::Upstream,
+    utils::{Body, BoxFut, HyperService, Peer, PeerAddr, PeerProto, response},
+};
 
 #[derive(Clone)]
 pub struct ConnectionService {
     table: Arc<Mutex<HashMap<PeerAddr, HttpClient>>>,
-    config: Arc<PoolConfig>,
+    config: Arc<ConnectionConfig>,
 }
 
-pub struct PoolConfig {
+pub struct ConnectionConfig {
     /// max number of concurrent handshakes
     pub max_http1_in_flight: u16,
     /// max number of connections per client
@@ -37,9 +46,9 @@ pub struct PoolConfig {
     pub to_check_int: Duration,
 }
 
-impl Default for PoolConfig {
+impl Default for ConnectionConfig {
     fn default() -> Self {
-        PoolConfig {
+        ConnectionConfig {
             max_http1_in_flight: 10,
             max_http1_con: 32,
             idle_timeout: Duration::from_secs(30),
@@ -50,7 +59,7 @@ impl Default for PoolConfig {
 
 // TODO: take configuration
 impl ConnectionService {
-    pub fn new(config: PoolConfig) -> Self {
+    pub fn new(config: ConnectionConfig) -> Self {
         let table = Arc::new(Mutex::new(HashMap::new()));
         ConnectionService {
             table,
@@ -110,8 +119,8 @@ fn new_http1_client(addr: PeerAddr, pool: &ConnectionService) -> HttpClient {
     let to_dur = pool.config.idle_timeout;
 
     let http1con = ServiceBuilder::new()
-        .concurrency_limit(10) // limits the amount of in-flight handshakes
-        .layer_fn(|con| Http1Connector::new(32, con))
+        .concurrency_limit(pool.config.max_http1_in_flight as usize) // limits the amount of in-flight handshakes
+        .layer_fn(|con| Http1Connect::new(pool.config.max_http1_con as usize, con))
         .service(UpstreamConnector::new());
 
     // we use a cache to dynamically open new connections in a pool
@@ -182,7 +191,7 @@ fn new_http2_client(addr: PeerAddr, pool: &ConnectionService) -> HttpClient {
     let to_dur = pool.config.idle_timeout;
 
     let http2 = ServiceBuilder::new()
-        .layer_fn(Http2Connector::new)
+        .layer_fn(Http2Connect::new)
         .service(UpstreamConnector::new());
 
     // we use a singleton to multiplex HTTP2 over a single connection
@@ -242,4 +251,38 @@ fn new_http2_client(addr: PeerAddr, pool: &ConnectionService) -> HttpClient {
         }
     });
     http2.boxed_clone()
+}
+
+fn new_client() -> HttpClient {
+    let http1 = ServiceBuilder::new()
+        .layer(layer_fn(|con| {
+            cache::builder().executor(TokioExecutor::new()).build(con)
+        }))
+        .layer_fn(|inner| Http1Connect::new(32, inner))
+        .service(UpstreamConnector::new());
+
+    let http2 = ServiceBuilder::new()
+        .layer(layer_fn(Singleton::new))
+        .layer_fn(Http2Connect::new)
+        .service(UpstreamConnector);
+
+    let con_layer = service_fn(move |req: Request<Incoming>| {
+        let mut http1 = http1.clone();
+        let mut http2 = http2.clone();
+
+        async move {
+            debug!("calling connector");
+            let peer = req
+                .extensions()
+                .get::<Peer>()
+                .cloned()
+                .ok_or_else(|| anyhow!("PeerAddr extension not found, req: {req:?}"))?;
+
+            match peer.prot {
+                PeerProto::Http1 => http1.ready().await?.call(peer.addr).await?.call(req).await,
+                PeerProto::Http2 => http2.ready().await?.call(peer.addr).await?.call(req).await,
+            }
+        }
+    });
+    con_layer.boxed_clone()
 }

@@ -17,29 +17,41 @@ use crate::utils::*;
  * this upstream service uses hyper's client to talk to peers
  */
 
-pub fn setup_client() -> Client<UpstreamConnector, Incoming> {
-    Client::builder(hyper_util::rt::TokioExecutor::new())
-        .pool_idle_timeout(std::time::Duration::from_secs(30))
-        .pool_timer(TokioTimer::new())
-        .pool_max_idle_per_host(40)
-        .build(UpstreamConnector::new())
+#[derive(Debug)]
+pub struct UpstreamService<B> {
+    client: Client<UpstreamConnector, B>,
 }
 
-#[derive(Debug, Clone)]
-pub struct UpstreamService {
-    client: Client<UpstreamConnector, Incoming>,
-}
-
-impl UpstreamService {
-    pub fn new() -> Self {
-        debug!("new upstream service");
+impl<B> Clone for UpstreamService<B> {
+    fn clone(&self) -> Self {
         Self {
-            client: setup_client(),
+            client: self.client.clone(),
         }
     }
 }
 
-impl Service<Request<Incoming>> for UpstreamService {
+impl<B> UpstreamService<B>
+where
+    B: hyper::body::Body + Send,
+    B::Data: Send,
+{
+    pub fn new() -> Self {
+        let client = Client::builder(hyper_util::rt::TokioExecutor::new())
+            .pool_idle_timeout(std::time::Duration::from_secs(30))
+            .pool_timer(TokioTimer::new())
+            .pool_max_idle_per_host(40)
+            .build(UpstreamConnector::new());
+        debug!("new upstream service");
+        Self { client }
+    }
+}
+
+impl<B> Service<Request<B>> for UpstreamService<B>
+where
+    B: hyper::body::Body + Send + 'static + Unpin,
+    B::Data: Send,
+    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
     type Response = Response<Body>;
     type Error = BoxError;
     type Future = UpstreamResponseFuture;
@@ -51,7 +63,7 @@ impl Service<Request<Incoming>> for UpstreamService {
         std::task::Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, req: Request<Incoming>) -> Self::Future {
+    fn call(&mut self, req: Request<B>) -> Self::Future {
         let client = self.client.clone();
 
         UpstreamResponseFuture {
@@ -83,7 +95,7 @@ impl Future for UpstreamResponseFuture {
                     elapsed_ms = t.elapsed().as_millis(),
                     "forwarded message time"
                 );
-                Ok(resp.map(|r| r.map_err(Into::into).boxed()))
+                Ok(resp.map(|r| r.map_err(Into::into).boxed_unsync()))
             }
             Err(e) => {
                 error!(?e, "couldnt send request");

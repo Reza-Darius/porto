@@ -53,14 +53,14 @@ impl Service<Request<Incoming>> for Http1Sender<Incoming> {
         Box::pin(async move {
             let resp = f.await?;
             debug!(?resp, "response from backend");
-            Ok(resp.map(|r| r.map_err(Into::into).boxed()))
+            Ok(resp.map(|r| r.map_err(Into::into).boxed_unsync()))
         })
     }
 }
 
 /// a service to establish a connection to a backend via UDS or TCP
 #[derive(Debug)]
-pub struct Http1Connector<S> {
+pub struct Http1Connect<S> {
     /// number of active connections
     n_connections: Arc<AtomicU16>,
     semaphore: PollSemaphore,
@@ -69,9 +69,9 @@ pub struct Http1Connector<S> {
 }
 
 #[allow(clippy::new_without_default)]
-impl<S> Http1Connector<S> {
+impl<S> Http1Connect<S> {
     pub fn new(max_connections: usize, inner: S) -> Self {
-        Http1Connector {
+        Http1Connect {
             n_connections: Arc::new(0.into()),
             semaphore: PollSemaphore::new(Arc::new(Semaphore::new(max_connections))),
             permit: None,
@@ -81,7 +81,7 @@ impl<S> Http1Connector<S> {
 }
 
 // clone the connector without an acquired permit
-impl<S: Clone> Clone for Http1Connector<S> {
+impl<S: Clone> Clone for Http1Connect<S> {
     fn clone(&self) -> Self {
         Self {
             n_connections: self.n_connections.clone(),
@@ -92,7 +92,7 @@ impl<S: Clone> Clone for Http1Connector<S> {
     }
 }
 
-impl<S> Service<PeerAddr> for Http1Connector<S>
+impl<S> Service<PeerAddr> for Http1Connect<S>
 where
     S: Service<PeerAddr, Response = Upstream> + Clone + Send + 'static,
     S::Error: Into<BoxError>,
@@ -200,30 +200,30 @@ impl Service<Request<Incoming>> for Http2Sender<Incoming> {
         Box::pin(async move {
             let resp = f.await?;
             debug!(?resp, "response from backend");
-            Ok(resp.map(|r| r.map_err(Into::into).boxed()))
+            Ok(resp.map(|r| r.map_err(Into::into).boxed_unsync()))
         })
     }
 }
 
 /// a service to establish a connection to a backend via UDS or TCP
 #[derive(Debug, Clone)]
-pub struct Http2Connector<S> {
+pub struct Http2Connect<S> {
     /// number of active connections
     n_connections: Arc<AtomicU16>,
     inner: S,
 }
 
 #[allow(clippy::new_without_default)]
-impl<S> Http2Connector<S> {
+impl<S> Http2Connect<S> {
     pub fn new(inner: S) -> Self {
-        Http2Connector {
+        Http2Connect {
             n_connections: Arc::new(0.into()),
             inner,
         }
     }
 }
 
-impl<S> Service<PeerAddr> for Http2Connector<S>
+impl<S> Service<PeerAddr> for Http2Connect<S>
 where
     S: Service<PeerAddr, Response = Upstream> + Clone + Send + 'static,
     S::Error: Into<BoxError>,

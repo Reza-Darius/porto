@@ -9,7 +9,9 @@ use serde::Deserialize;
 use tap::Pipe;
 use tracing::{debug, instrument};
 
-use crate::utils::{Domain, PeerAddr};
+use crate::utils::{Domain, Peer, PeerAddr, PeerProto};
+
+const CONFIG_FILENAME: &str = "porto.toml";
 
 #[derive(Parser)]
 #[command(version, about, long_about = None)]
@@ -37,11 +39,11 @@ pub struct PortoConfig {
     proxy: Vec<ProxyConfig>,
 
     #[serde(skip)]
-    pub debug: bool,
+    pub debug: bool, // for testing only
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct ProxyConfig {
+struct ProxyConfig {
     pub domain: Domain,
     pub upstream: PeerAddr,
     #[serde(default)]
@@ -49,8 +51,8 @@ pub struct ProxyConfig {
 }
 
 impl PortoConfig {
-    pub fn get_proxies(&self) -> impl Iterator<Item = ProxyConfig> {
-        self.proxy.clone().into_iter()
+    pub fn get_proxies(&self) -> impl Iterator<Item = Peer> {
+        self.proxy.clone().into_iter().map(Into::into)
     }
 
     pub fn get_addr(&self) -> SocketAddr {
@@ -58,7 +60,18 @@ impl PortoConfig {
     }
 }
 
-const CONFIG_FILENAME: &str = "porto.toml";
+impl From<ProxyConfig> for Peer {
+    fn from(value: ProxyConfig) -> Self {
+        Peer::new(
+            value.domain,
+            value.upstream,
+            match value.http2 {
+                true => PeerProto::Http2,
+                false => PeerProto::Http1,
+            },
+        )
+    }
+}
 
 const fn default_tls() -> bool {
     true

@@ -11,28 +11,29 @@ use std::sync::atomic::AtomicU64;
 
 use addr::parse_domain_name;
 use anyhow::{Context, Result, anyhow};
-use derive_more::{AsRef, Display, Eq, From};
+use derive_more::{Display, Eq};
 use http::Version;
-use http_body_util::combinators::BoxBody;
+use http_body_util::combinators::UnsyncBoxBody;
 use hyper::body::{Bytes, Incoming};
 use hyper::{Request, Response};
-use parking_lot::Mutex;
-use serde::{Deserialize, Serialize};
-use tokio::net::TcpStream;
+use parking_lot::{Mutex, RwLock};
+use serde::Deserialize;
 use tower::BoxError;
 use tower::util::BoxCloneService;
 use tracing::debug;
 
-use crate::config::{PortoConfig, ProxyConfig};
+use crate::config::PortoConfig;
 
 pub type BoxFut<R, E> = Pin<Box<dyn Future<Output = std::result::Result<R, E>> + Send>>;
-pub type Body = BoxBody<Bytes, BoxError>;
+pub type Body = UnsyncBoxBody<Bytes, BoxError>;
 pub type HyperService = BoxCloneService<Request<Incoming>, Response<Body>, anyhow::Error>;
 
 /// monotonic counter for peer ids
 static ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-/// maps domains to upstream addresses as either UDS or TCP connection
+/// maps domains to backends
+///
+/// shared across the application
 #[derive(Debug, Clone, Default)]
 pub struct PeerTable {
     inner: Arc<PeerTableInner>,
@@ -40,8 +41,9 @@ pub struct PeerTable {
 
 #[derive(Debug, Default)]
 struct PeerTableInner {
-    domain_table: Mutex<HashMap<Domain, PeerId>>,
-    alive_peers: Mutex<HashMap<PeerId, Peer>>,
+    domain_table: RwLock<HashMap<Domain, PeerId>>,
+    alive_t: RwLock<HashMap<PeerId, Peer>>,
+    registered_peers: Mutex<Vec<Peer>>,
 }
 
 // TODO: prevent duplicate addresses
@@ -57,47 +59,50 @@ impl PeerTable {
     pub fn init(config: &PortoConfig) -> Self {
         let table = PeerTable {
             inner: Arc::new(PeerTableInner {
-                domain_table: Mutex::new(HashMap::new()),
-                alive_peers: Mutex::new(HashMap::new()),
+                registered_peers: Mutex::new(config.get_proxies().collect()),
+                ..Default::default()
             }),
         };
-        // TODO: intializing backnds needs to move somewhere else
-        for proxy in config.get_proxies() {
-            table.register_peer(proxy);
-        }
 
         debug!("initialized domains {table}");
         table
     }
 
-    pub fn register_peer(&self, proxy: ProxyConfig) {
-        let id = PeerId::new();
-        let peer = Peer::new(
-            proxy.upstream,
-            match proxy.http2 {
-                true => PeerProto::Http2,
-                false => PeerProto::Http1,
-            },
-        );
-        self.inner.alive_peers.lock().insert(id, peer);
-        self.inner.domain_table.lock().insert(proxy.domain, id);
+    /// register alive peer and in domain table
+    pub fn register_peer(&self, peer: Peer) {
+        self.inner
+            .domain_table
+            .write()
+            .insert(peer.name.clone(), peer.id);
+        self.inner.alive_t.write().insert(peer.id, peer);
+    }
+
+    // pub fn remove_peer(&self, domain: &Domain) -> Option<Peer> {
+    //     let id = self.inner.domain_table.write().remove(domain)?;
+    //     self.inner.alive_t.write().remove(&id)
+    // }
+
+    pub fn evict_peer(&self, id: PeerId) -> Option<Peer> {
+        let peer = self.inner.alive_t.write().remove(&id)?;
+        self.inner.domain_table.write().remove(&peer.name);
+        Some(peer)
     }
 
     /// fetches a reachable Peer
     pub fn get_peer(&self, host: &str) -> Option<Peer> {
         self.inner
             .domain_table
-            .lock()
+            .read()
             .get(host)
-            .and_then(|id| self.get_peer_by_id(id))
+            .and_then(|id| self.get_peer_by_id(*id))
     }
 
-    pub fn get_peer_by_id(&self, id: &PeerId) -> Option<Peer> {
-        self.inner.alive_peers.lock().get(id).cloned()
+    pub fn get_peer_by_id(&self, id: PeerId) -> Option<Peer> {
+        self.inner.alive_t.read().get(&id).cloned()
     }
 
     pub fn get_domains(&self) -> Vec<Domain> {
-        self.inner.domain_table.lock().keys().cloned().collect()
+        self.inner.domain_table.read().keys().cloned().collect()
     }
 }
 
@@ -113,14 +118,29 @@ impl PeerId {
 /// a backend peer to upstream requests to
 #[derive(Debug, Clone)]
 pub struct Peer {
+    pub id: PeerId,
+    pub name: Domain,
     pub addr: PeerAddr,
+    /// supported HTTP protocol
     pub prot: PeerProto,
 }
 
 impl Peer {
-    fn new(addr: PeerAddr, prot: PeerProto) -> Self {
-        Peer { addr, prot }
+    pub fn new(name: Domain, addr: PeerAddr, prot: PeerProto) -> Self {
+        Peer {
+            id: PeerId::new(),
+            name,
+            addr,
+            prot,
+        }
     }
+}
+#[derive(Debug, Clone)]
+pub struct PeerInner {
+    pub id: PeerId,
+    pub name: Domain,
+    pub addr: PeerAddr,
+    pub prot: PeerProto,
 }
 
 impl<const N: usize> TryFrom<&[(&str, &str); N]> for PeerTable {
@@ -132,21 +152,16 @@ impl<const N: usize> TryFrom<&[(&str, &str); N]> for PeerTable {
         for (domain, addr) in value.iter() {
             let domain = Domain::parse(domain)?;
             let upstream = PeerAddr::try_from(*addr)?;
-            let p = ProxyConfig {
-                domain,
-                upstream,
-                http2: false,
-            };
+            let p = Peer::new(domain, upstream, PeerProto::Http1);
             table.register_peer(p);
         }
-
         Ok(table)
     }
 }
 
 impl Display for PeerTable {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for (domain, peer) in self.inner.domain_table.lock().iter() {
+        for (domain, peer) in self.inner.domain_table.read().iter() {
             write!(f, "Domain: {domain}, peer: {peer:?}")?;
         }
         std::fmt::Result::Ok(())

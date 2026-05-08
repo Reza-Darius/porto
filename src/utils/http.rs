@@ -1,8 +1,6 @@
 use std::net::SocketAddr as IpSockAddr;
 use std::sync::Arc;
-use std::time::Instant;
 
-use anyhow::{Result, anyhow};
 use http::header;
 use http::request::Parts;
 use http_body_util::Empty;
@@ -10,11 +8,9 @@ use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
 use hyper::header::HOST;
 use hyper::header::HeaderValue;
-use hyper::{HeaderMap, Request, Response, StatusCode, Uri, Version};
-use tap::Pipe;
-use tokio::net::unix::{SocketAddr, UCred};
+use hyper::{HeaderMap, Request, Response, StatusCode, Version};
+use tokio::net::unix::UCred;
 use tracing::debug;
-use tracing::trace;
 
 use crate::utils::Body;
 
@@ -23,13 +19,13 @@ use crate::utils::Body;
 pub fn empty() -> Body {
     Empty::<Bytes>::new()
         .map_err(|never| match never {})
-        .boxed()
+        .boxed_unsync()
 }
 
 pub fn full<T: Into<Bytes>>(chunk: T) -> Body {
     Full::new(chunk.into())
         .map_err(|never| match never {})
-        .boxed()
+        .boxed_unsync()
 }
 
 #[derive(Clone, Debug)]
