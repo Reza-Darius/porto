@@ -43,9 +43,7 @@ pub fn setup_service(config: &PortoConfig) -> HyperService {
         .boxed_clone()
 }
 
-pub fn setup_service4(config: &PortoConfig) -> HyperService {
-    let table = PeerTable::init(config);
-
+pub fn setup_service4(config: &PortoConfig, peers: PeerTable) -> HyperService {
     // building THE tower (tm)
     let tower = ServiceBuilder::new()
         .layer(TraceLayer::new_for_http())
@@ -55,7 +53,7 @@ pub fn setup_service4(config: &PortoConfig) -> HyperService {
         ))
         .layer(CatchPanicLayer::custom(handle_panic))
         .layer(CompressionLayer::new().gzip(true))
-        .layer(AddrServiceLayer::new(table))
+        .layer(AddrServiceLayer::new(peers))
         .layer(ResponseCacheLayer::new(1024))
         .service(ConnectionService::new(ConnectionConfig::default()));
 

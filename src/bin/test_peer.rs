@@ -1,10 +1,11 @@
-use std::ops::Deref;
+use std::{convert::Infallible, ops::Deref};
 
 use anyhow::Result;
 use axum::{
     Router,
     body::Body,
     extract::Request,
+    middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::get,
 };
@@ -14,6 +15,7 @@ use hyper::server::conn::http1;
 use hyper_util::{rt::TokioIo, service::TowerToHyperService};
 use porto::utils::{PeerAddr, PeerAddrInner, setup_tracing};
 use tokio::task::JoinSet;
+use tower::Service;
 use tracing::{error, info};
 
 #[tokio::main]
@@ -25,13 +27,16 @@ async fn main() -> Result<()> {
         .map(|addr| PeerAddr::try_from(*addr).unwrap())
         .collect();
 
+    let route = Router::new()
+        .route("/", get(echo))
+        .route("/cache", get(cache))
+        .route("/health", get(health))
+        .layer(middleware::from_fn(log_handle));
+
     let mut set: JoinSet<Result<(), anyhow::Error>> = JoinSet::new();
     for addr in listen_addr.into_iter() {
+        let route = route.clone();
         set.spawn(async move {
-            let route = Router::new()
-                .route("/", get(echo))
-                .route("/cache", get(cache));
-
             match addr.deref() {
                 PeerAddrInner::Ipv4(sock_addr) => {
                     let listener = tokio::net::TcpListener::bind(sock_addr)
@@ -54,9 +59,11 @@ async fn main() -> Result<()> {
                     }
                 }
                 PeerAddrInner::Uds(sock_path) => {
-                    tokio::fs::remove_file(sock_path)
-                        .await
-                        .inspect_err(|e| error!(%e))?;
+                    if sock_path.exists() {
+                        tokio::fs::remove_file(sock_path)
+                            .await
+                            .inspect_err(|e| error!(%e))?;
+                    }
                     info!("listening on UDS {}", sock_path.display());
 
                     let addr = std::os::unix::net::SocketAddr::from_pathname(sock_path)?;
@@ -74,29 +81,32 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+async fn log_handle(req: Request, mut next: Next) -> impl IntoResponse {
+    info!("received request: {req:?}");
+    let resp = next.call(req).await;
+    info!("replying with: {:?}", resp);
+    resp
+}
+
 async fn _hyper(_: hyper::Request<hyper::body::Incoming>) -> http::Response<porto::utils::Body> {
     todo!()
 }
 
-async fn echo(req: Request) -> impl IntoResponse {
-    info!("received request: {req:?}");
-
-    let resp = Response::builder()
-        .status(StatusCode::OK)
-        .body(Body::empty());
-
-    info!("replying with: {:?}", resp);
-    resp.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+async fn health() -> impl IntoResponse {
+    StatusCode::OK
 }
 
-async fn cache(req: Request) -> impl IntoResponse {
-    info!("received request: {req:?}");
+async fn echo() -> Response {
+    Response::builder()
+        .status(StatusCode::OK)
+        .body(Body::empty())
+        .expect("the values are hard coded")
+}
 
-    let resp = Response::builder()
+async fn cache() -> Response {
+    Response::builder()
         .status(StatusCode::OK)
         .header(CACHE_CONTROL, "max-age=60")
-        .body(Body::empty());
-
-    info!("replying with: {:?}", resp);
-    resp.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+        .body(Body::empty())
+        .expect("the value are hard coded")
 }

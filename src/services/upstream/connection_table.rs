@@ -9,7 +9,12 @@ use anyhow::anyhow;
 use http::{Request, Response, StatusCode};
 use hyper::body::Incoming;
 use hyper_util::{
-    client::pool::{self, cache, map, negotiate, singleton::Singleton},
+    client::pool::{
+        self, cache,
+        map::{self, Map},
+        negotiate::{self, builder},
+        singleton::Singleton,
+    },
     rt::TokioExecutor,
 };
 use parking_lot::Mutex;
@@ -255,8 +260,8 @@ fn new_http2_client(addr: PeerAddr, pool: &ConnectionService) -> HttpClient {
 
 fn new_client() -> HttpClient {
     let http1 = ServiceBuilder::new()
-        .layer(layer_fn(|con| {
-            cache::builder().executor(TokioExecutor::new()).build(con)
+        .layer(layer_fn(|inner| {
+            cache::builder().executor(TokioExecutor::new()).build(inner)
         }))
         .layer_fn(|inner| Http1Connect::new(32, inner))
         .service(UpstreamConnector::new());
@@ -264,9 +269,9 @@ fn new_client() -> HttpClient {
     let http2 = ServiceBuilder::new()
         .layer(layer_fn(Singleton::new))
         .layer_fn(Http2Connect::new)
-        .service(UpstreamConnector);
+        .service(UpstreamConnector::new());
 
-    let con_layer = service_fn(move |req: Request<Incoming>| {
+    let neg_layer = service_fn(move |req: Request<Incoming>| {
         let mut http1 = http1.clone();
         let mut http2 = http2.clone();
 
@@ -284,5 +289,48 @@ fn new_client() -> HttpClient {
             }
         }
     });
-    con_layer.boxed_clone()
+
+    let map = Map::builder::<Peer>()
+        .keys(|peer| peer.addr.clone())
+        .values(move |_peer| neg_layer.clone())
+        .build();
+
+    let map = Arc::new(Mutex::new(map));
+    let worker_clone = map.clone();
+
+    // // background worker to time out idle connections
+    // tokio::spawn(async move {
+    //     let mut timeout_check = tokio::time::interval(to_interval);
+
+    //     // the first tick completes instantly
+    //     timeout_check.tick().await;
+    //     loop {
+    //         timeout_check.tick().await;
+    //         let now = Instant::now();
+    //         worker_clone.lock().retain(|peer, svc| {
+    //             if peer.sender.is_closed() {
+    //                 return false;
+    //             }
+    //             now < peer.last_used + to_dur
+    //         });
+    //     }
+    // });
+
+    let svc = service_fn(move |req: Request<Incoming>| {
+        let map = map.clone();
+
+        async move {
+            debug!("calling map");
+            let peer = req
+                .extensions()
+                .get::<Peer>()
+                .ok_or_else(|| anyhow!("PeerAddr extension not found, req: {req:?}"))?;
+
+            let mut svc = { map.lock().service(peer).clone() };
+
+            svc.call(req).await
+        }
+    });
+
+    svc.boxed_clone()
 }

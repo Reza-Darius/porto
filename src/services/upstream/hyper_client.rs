@@ -1,7 +1,6 @@
 use anyhow::Result;
 use http_body_util::BodyExt;
 use hyper::StatusCode;
-use hyper::body::Incoming;
 use hyper::{Request, Response};
 use hyper_util::client::legacy::{Client, ResponseFuture};
 use hyper_util::rt::TokioTimer;
@@ -41,7 +40,6 @@ where
             .pool_timer(TokioTimer::new())
             .pool_max_idle_per_host(40)
             .build(UpstreamConnector::new());
-        debug!("new upstream service");
         Self { client }
     }
 }

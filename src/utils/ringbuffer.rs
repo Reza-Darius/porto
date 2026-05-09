@@ -231,6 +231,8 @@ mod tests {
         for _ in 0..10 {
             q.push(MyElement(String::from("hello")));
         }
+
+        assert_eq!(q.len(), 10);
         assert!(q.is_full());
         assert!(q.push(MyElement(String::from("hello"))).is_err());
 
@@ -254,11 +256,15 @@ mod tests {
             q.push(MyElement(String::from("hello")));
         }
 
+        assert_eq!(q.len(), 10);
+
         let mut clone = q.clone();
 
         for _ in 0..10 {
             assert!(clone.pop().is_some());
         }
+
+        assert_eq!(clone.len(), 0);
         assert!(clone.is_empty());
     }
 }

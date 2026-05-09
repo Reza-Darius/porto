@@ -1,19 +1,15 @@
-addr := "127.0.0.1:4000"
+server_addr := "127.0.0.1:4000"
 
 sr:
-    export RUST_LOG=error
-    cargo run --release --bin server -- {{ addr }}
+    cargo run --release --bin server -- {{ server_addr }}
 
 s:
-    export RUST_LOG=debug
-    cargo run --bin server -- {{ addr }}
+    cargo run --bin server -- {{ server_addr }}
 
 pr:
-    export RUST_LOG=error
     cargo run --release --bin peer
 
 p:
-    export RUST_LOG=debug
     cargo run --bin peer
 
 c:

@@ -118,19 +118,7 @@ fn uri_absolute(parts: &http::request::Parts, peer_addr: &PeerAddr) -> anyhow::R
         .cloned()
         .ok_or_else(|| anyhow!("no path found on request"))?;
 
-    let uri = match &**peer_addr {
-        PeerAddrInner::Uds(socket_addr) => UdsUri::new(socket_addr, path.as_str()).into(),
-        PeerAddrInner::Ipv4(addr) => {
-            let authority: Authority = Authority::from_str(&addr.to_string()).unwrap();
-            Uri::builder()
-                .scheme("http")
-                .authority(authority)
-                .path_and_query(path)
-                .build()
-                .unwrap()
-        }
-    };
-    Ok(uri)
+    peer_addr.to_uri(path)
 }
 
 fn uri_origin(parts: &http::request::Parts) -> anyhow::Result<Uri> {

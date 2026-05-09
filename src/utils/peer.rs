@@ -12,10 +12,12 @@ use std::sync::atomic::AtomicU64;
 use addr::parse_domain_name;
 use anyhow::{Context, Result, anyhow};
 use derive_more::{Display, Eq};
-use http::Version;
+use http::uri::{Authority, PathAndQuery};
+use http::{Uri, Version};
 use http_body_util::combinators::UnsyncBoxBody;
 use hyper::body::{Bytes, Incoming};
 use hyper::{Request, Response};
+use hyperlocal::Uri as UdsUri;
 use parking_lot::{Mutex, RwLock};
 use serde::Deserialize;
 use tower::BoxError;
@@ -70,17 +72,14 @@ impl PeerTable {
 
     /// register alive peer and in domain table
     pub fn register_peer(&self, peer: Peer) {
+        debug!(id = %peer.id, addr = %peer.addr, "registering peer");
+
         self.inner
             .domain_table
             .write()
             .insert(peer.name.clone(), peer.id);
         self.inner.alive_t.write().insert(peer.id, peer);
     }
-
-    // pub fn remove_peer(&self, domain: &Domain) -> Option<Peer> {
-    //     let id = self.inner.domain_table.write().remove(domain)?;
-    //     self.inner.alive_t.write().remove(&id)
-    // }
 
     pub fn evict_peer(&self, id: PeerId) -> Option<Peer> {
         let peer = self.inner.alive_t.write().remove(&id)?;
@@ -104,43 +103,11 @@ impl PeerTable {
     pub fn get_domains(&self) -> Vec<Domain> {
         self.inner.domain_table.read().keys().cloned().collect()
     }
-}
 
-#[derive(Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
-pub struct PeerId(u64);
-
-impl PeerId {
-    pub fn new() -> Self {
-        PeerId(ID_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+    pub fn get_reg_peers(&self) -> impl Iterator<Item = Peer> {
+        let mut guard = self.inner.registered_peers.lock();
+        std::mem::take(&mut *guard).into_iter()
     }
-}
-
-/// a backend peer to upstream requests to
-#[derive(Debug, Clone)]
-pub struct Peer {
-    pub id: PeerId,
-    pub name: Domain,
-    pub addr: PeerAddr,
-    /// supported HTTP protocol
-    pub prot: PeerProto,
-}
-
-impl Peer {
-    pub fn new(name: Domain, addr: PeerAddr, prot: PeerProto) -> Self {
-        Peer {
-            id: PeerId::new(),
-            name,
-            addr,
-            prot,
-        }
-    }
-}
-#[derive(Debug, Clone)]
-pub struct PeerInner {
-    pub id: PeerId,
-    pub name: Domain,
-    pub addr: PeerAddr,
-    pub prot: PeerProto,
 }
 
 impl<const N: usize> TryFrom<&[(&str, &str); N]> for PeerTable {
@@ -167,6 +134,39 @@ impl Display for PeerTable {
         std::fmt::Result::Ok(())
     }
 }
+
+#[derive(Display, Debug, Hash, PartialEq, Eq, PartialOrd, Ord, Clone, Copy)]
+pub struct PeerId(u64);
+
+impl PeerId {
+    pub fn new() -> Self {
+        PeerId(ID_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+    }
+}
+
+/// a backend peer to upstream requests to
+///
+/// cheap-ish to clone
+#[derive(Debug, Clone)]
+pub struct Peer {
+    pub id: PeerId,
+    pub name: Domain,
+    pub addr: PeerAddr,
+    /// supported HTTP protocol
+    pub prot: PeerProto,
+}
+
+impl Peer {
+    pub fn new(name: Domain, addr: PeerAddr, prot: PeerProto) -> Self {
+        Peer {
+            id: PeerId::new(),
+            name,
+            addr,
+            prot,
+        }
+    }
+}
+
 // TODO: refactor this into a wrapper type
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
@@ -174,21 +174,28 @@ pub struct PeerAddr {
     inner: Arc<PeerAddrInner>,
 }
 
-/// the HTTP protocol supported by the backend
-#[derive(Debug, Clone, Copy, Deserialize, Hash, PartialEq, Eq, PartialOrd, Ord, Default)]
-#[serde(untagged)]
-pub enum PeerProto {
-    #[default]
-    Http1,
-    Http2,
-}
-
-impl PeerProto {
-    pub fn to_ver(&self) -> http::Version {
-        match self {
-            PeerProto::Http1 => Version::HTTP_11,
-            PeerProto::Http2 => Version::HTTP_2,
-        }
+impl PeerAddr {
+    /// converts the peeraddr to an URI with the peer addr as the authority/host
+    pub fn to_uri<P>(&self, path: P) -> Result<Uri, anyhow::Error>
+    where
+        P: TryInto<PathAndQuery>,
+        P::Error: Into<anyhow::Error>,
+    {
+        let uri = match &**self {
+            PeerAddrInner::Uds(socket_addr) => {
+                UdsUri::new(socket_addr, path.try_into().map_err(Into::into)?.as_str()).into()
+            }
+            PeerAddrInner::Ipv4(addr) => {
+                let authority: Authority = Authority::from_str(&addr.to_string()).unwrap();
+                Uri::builder()
+                    .scheme("http")
+                    .authority(authority)
+                    .path_and_query(path.try_into().map_err(Into::into)?)
+                    .build()
+                    .unwrap()
+            }
+        };
+        Ok(uri)
     }
 }
 
@@ -257,6 +264,24 @@ impl Display for PeerAddr {
         match *self.inner {
             PeerAddrInner::Ipv4(ref socket_addr) => write!(f, "{}", socket_addr),
             PeerAddrInner::Uds(ref path_buf) => write!(f, "{}", path_buf.display()),
+        }
+    }
+}
+
+/// the HTTP protocol supported by the backend
+#[derive(Debug, Clone, Copy, Deserialize, Hash, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[serde(untagged)]
+pub enum PeerProto {
+    #[default]
+    Http1,
+    Http2,
+}
+
+impl PeerProto {
+    pub fn to_ver(&self) -> http::Version {
+        match self {
+            PeerProto::Http1 => Version::HTTP_11,
+            PeerProto::Http2 => Version::HTTP_2,
         }
     }
 }

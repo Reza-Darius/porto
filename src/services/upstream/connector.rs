@@ -91,6 +91,7 @@ impl UpstreamConnector {
     }
 }
 
+/// implementation to use with hyper's client
 impl tower::Service<Uri> for UpstreamConnector {
     type Response = TokioIo<Upstream>;
     type Error = std::io::Error;
@@ -155,6 +156,7 @@ fn parse_socket_path(uri: &Uri) -> Result<PathBuf, io::Error> {
     }
 }
 
+/// implementation for own client
 impl tower::Service<PeerAddr> for UpstreamConnector {
     type Response = Upstream;
     type Error = std::io::Error;

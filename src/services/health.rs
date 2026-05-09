@@ -4,10 +4,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-use http::{Method, Request};
-use tap::Pipe;
+use http::{Method, Request, Uri};
 use tower::Service;
-use tracing::warn;
+use tracing::{debug, error, info, warn};
 
 use crate::{services::upstream::hyper_client::UpstreamService, utils::*};
 
@@ -20,6 +19,7 @@ struct HealthService {
     /// this queue corresponds with the alive_backend table
     alive_q: Queue<QEntry>,
     alive_t: PeerTable, // the alive peers live in the peertable
+
     /// this is a unique queue only the health worker cares about
     dead_q: Queue<QEntry>,
     dead_t: HashMap<PeerId, Peer>,
@@ -28,23 +28,23 @@ struct HealthService {
 #[derive(Clone, Copy)]
 struct QEntry {
     id: PeerId,
-    added: Instant,
+    timestamp: Instant,
 }
 
 impl QEntry {
     pub fn new(id: PeerId) -> Self {
         QEntry {
             id,
-            added: Instant::now(),
+            timestamp: Instant::now(),
         }
     }
 
     fn is_expired(&self, ttl: Duration) -> bool {
-        self.added.elapsed() > ttl
+        self.timestamp.elapsed() >= ttl
     }
 
     fn reset(&mut self) {
-        self.added = Instant::now()
+        self.timestamp = Instant::now()
     }
 }
 
@@ -71,7 +71,7 @@ impl Default for HealthServiceConfig {
     fn default() -> Self {
         HealthServiceConfig {
             alive_check_interval: Duration::from_secs(30),
-            dead_check_interval: Duration::from_secs(30),
+            dead_check_interval: Duration::from_secs(60),
             alive_ttl: Duration::from_secs(30),
             dead_ttl: Duration::from_secs(60),
             q_cap: 50,
@@ -92,57 +92,83 @@ impl HealthService {
     }
 
     async fn check_aliveq(&mut self) {
-        let Some(mut entry) = self.alive_q.pop() else {
-            return;
-        };
+        debug!("checking reachable backends...");
 
-        entry.reset();
+        while let Some(entry) = self.alive_q.pop() {
+            // we stop as soon as we see a non-expired entry, because all the ones following arent expired either
+            if !entry.is_expired(self.config.alive_ttl) {
+                debug!(%entry.id, "entry not expired");
+                self.alive_q
+                    .push(entry)
+                    .expect("we dont handle full queue yet");
+                return;
+            }
 
-        if !entry.is_expired(self.config.alive_ttl) {
-            self.alive_q.push(entry);
-            return;
+            debug!(%entry.id, "entry expired");
+
+            let peer = self
+                .alive_t
+                .get_peer_by_id(entry.id)
+                .expect("if its in the alive queue, it has to be in the table");
+            self.check_entry(entry, peer).await;
         }
-
-        self.check_entry(entry).await;
     }
 
     async fn check_deadq(&mut self) {
-        let Some(mut entry) = self.dead_q.pop() else {
-            return;
-        };
+        debug!("checking unreachable backends...");
 
-        entry.reset();
+        while let Some(entry) = self.dead_q.pop() {
+            if !entry.is_expired(self.config.dead_ttl) {
+                debug!(%entry.id, "entry not expired");
+                self.dead_q
+                    .push(entry)
+                    .expect("we dont handle full queue yet");
+                return;
+            }
 
-        if !entry.is_expired(self.config.dead_ttl) {
-            self.dead_q.push(entry);
-            return;
+            debug!(%entry.id, "entry expired");
+
+            let peer = self
+                .dead_t
+                .get(&entry.id)
+                .cloned()
+                .expect("if its in the alive queue, it has to be in the table");
+            self.check_entry(entry, peer).await;
         }
-
-        self.check_entry(entry).await;
     }
 
-    async fn check_entry(&mut self, entry: QEntry) {
-        // we need to call the peer
-        let peer = self
-            .alive_t
-            .get_peer_by_id(entry.id)
-            .expect("if its in the alive queue, it has to be in the table");
+    async fn check_entry(&mut self, mut entry: QEntry, peer: Peer) {
+        entry.reset();
 
         if self.check_peer_alive(&peer).await {
-            self.alive_q.push(entry);
+            debug!(peer = %peer.name, "peer OK");
+
+            self.alive_q
+                .push(entry)
+                .expect("we dont handle full queue yet");
             self.alive_t.register_peer(peer);
             self.dead_t.remove(&entry.id);
         } else {
-            self.dead_q.push(entry);
+            warn!(peer = %peer.name, "peer unreachable");
+
+            self.dead_q
+                .push(entry)
+                .expect("we dont handle full queue yet");
             self.alive_t.evict_peer(entry.id);
             self.dead_t.insert(entry.id, peer);
         }
     }
 
     async fn check_peer_alive(&mut self, peer: &Peer) -> bool {
+        let uri = peer
+            .addr
+            .to_uri("/health")
+            .inspect_err(|e| error!(%e))
+            .unwrap();
+
         let mut req = Request::builder()
             .method(Method::GET)
-            .uri("/health")
+            .uri(uri)
             .body(empty())
             .expect("the values are hard coded");
 
@@ -156,11 +182,58 @@ impl HealthService {
             }
         }
     }
+
+    async fn register_new_peer(&mut self, peer: Peer) {
+        let entry = QEntry::new(peer.id);
+
+        if self.check_peer_alive(&peer).await {
+            debug!(peer = %peer.name, "peer OK");
+
+            self.alive_q
+                .push(entry)
+                .expect("we dont handle full queue yet");
+            self.alive_t.register_peer(peer);
+        } else {
+            warn!(peer = %peer.name, "peer unreachable");
+
+            self.dead_q
+                .push(entry)
+                .expect("we dont handle full queue yet");
+            self.dead_t.insert(entry.id, peer);
+        }
+    }
 }
 
 pub fn setup_health_service(config: HealthServiceConfig, peers: PeerTable) {
-    let mut hw = HealthService::new(config, peers);
     tokio::spawn(async move {
+        info!("setting up health service");
+
+        let new_peers = peers.get_reg_peers();
+        let mut hw = HealthService::new(config, peers.clone());
+
         // we call each peer on startup
+        debug!("initializing peers");
+        let mut count = 0;
+        for peer in new_peers {
+            hw.register_new_peer(peer).await;
+            count += 1;
+        }
+        assert_eq!(count, hw.alive_q.len() + hw.dead_q.len());
+
+        let mut alive_int = tokio::time::interval(hw.config.alive_check_interval);
+        let mut dead_int = tokio::time::interval(hw.config.dead_check_interval);
+
+        loop {
+            tokio::select! {
+                _ = alive_int.tick() => {
+                    hw.check_aliveq().await;
+                    debug!("currently reachable backends: {}", hw.alive_q.len());
+                }
+                _ = dead_int.tick() => {
+                    hw.check_deadq().await;
+                    debug!("currently unreachable backends: {}", hw.dead_q.len());
+                }
+            }
+        }
     });
 }
