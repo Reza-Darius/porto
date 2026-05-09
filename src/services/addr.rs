@@ -1,12 +1,8 @@
-use std::{
-    str::FromStr,
-    task::{Poll, ready},
-};
+use std::task::{Poll, ready};
 
 use anyhow::anyhow;
-use http::{Uri, Version, uri::Authority};
+use http::{Uri, Version};
 use hyper::{Request, Response, StatusCode};
-use hyperlocal::Uri as UdsUri;
 use pin_project_lite::pin_project;
 use tower::{BoxError, Service};
 use tracing::{debug, error};
@@ -82,6 +78,7 @@ where
         }
 
         // rewrite URI
+        // TODO: use origin form when not using hyper client
         parts.uri = match uri_absolute(&parts, &peer.addr) {
             Ok(uri) => uri,
             Err(e) => {
@@ -108,30 +105,6 @@ where
             client_expect,
         }
     }
-}
-
-// this is not ideal but compatible with the hyper legacy client
-fn uri_absolute(parts: &http::request::Parts, peer_addr: &PeerAddr) -> anyhow::Result<Uri> {
-    let path = parts
-        .uri
-        .path_and_query()
-        .cloned()
-        .ok_or_else(|| anyhow!("no path found on request"))?;
-
-    peer_addr.to_uri(path)
-}
-
-fn uri_origin(parts: &http::request::Parts) -> anyhow::Result<Uri> {
-    let path = parts
-        .uri
-        .path_and_query()
-        .cloned()
-        .ok_or_else(|| anyhow!("no path found on request"))?;
-
-    Uri::builder()
-        .path_and_query(path)
-        .build()
-        .map_err(Into::into)
 }
 
 pin_project! {

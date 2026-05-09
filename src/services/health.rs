@@ -63,6 +63,8 @@ pub struct HealthServiceConfig {
     alive_ttl: Duration,
     dead_ttl: Duration,
 
+    /// timeout threshhold after which the backend is considered unreachable
+    req_to: Duration,
     /// capacity of each queue
     q_cap: u16,
 }
@@ -70,10 +72,11 @@ pub struct HealthServiceConfig {
 impl Default for HealthServiceConfig {
     fn default() -> Self {
         HealthServiceConfig {
-            alive_check_interval: Duration::from_secs(30),
-            dead_check_interval: Duration::from_secs(60),
-            alive_ttl: Duration::from_secs(30),
-            dead_ttl: Duration::from_secs(60),
+            alive_check_interval: Duration::from_secs(10),
+            dead_check_interval: Duration::from_secs(20),
+            alive_ttl: Duration::from_secs(10),
+            dead_ttl: Duration::from_secs(20),
+            req_to: Duration::from_secs(2),
             q_cap: 50,
         }
     }
@@ -174,10 +177,17 @@ impl HealthService {
 
         req.extensions_mut().insert(peer.addr.clone());
 
-        match self.client.call(req).await {
-            Ok(resp) => resp.status().is_success(),
-            Err(e) => {
-                warn!(%e);
+        tokio::select! {
+            res = self.client.call(req) => {
+                match res {
+                    Ok(resp) => resp.status().is_success(),
+                    Err(e) => {
+                        warn!(%e);
+                        false
+                    }
+                }
+            }
+            _ = tokio::time::sleep(self.config.req_to) => {
                 false
             }
         }

@@ -1,8 +1,8 @@
 use std::net::SocketAddr as IpSockAddr;
 use std::sync::Arc;
 
-use http::header;
 use http::request::Parts;
+use http::{Uri, header};
 use http_body_util::Empty;
 use http_body_util::{BodyExt, Full};
 use hyper::body::Bytes;
@@ -12,7 +12,7 @@ use hyper::{HeaderMap, Request, Response, StatusCode, Version};
 use tokio::net::unix::UCred;
 use tracing::debug;
 
-use crate::utils::Body;
+use crate::utils::{Body, PeerAddr};
 
 // We create some utility functions to make Empty and Full bodies
 // fit our broadened Response body type.
@@ -151,4 +151,15 @@ fn add_forward_header<B>(req: &mut Request<B>) {
             tracing::error!("couldnt create header value from sock addr");
         };
     };
+}
+
+/// call this to create a hyper client compatible URI
+pub fn uri_absolute(parts: &http::request::Parts, peer_addr: &PeerAddr) -> anyhow::Result<Uri> {
+    let path = parts
+        .uri
+        .path_and_query()
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("no path found on request"))?;
+
+    peer_addr.to_uri(path)
 }

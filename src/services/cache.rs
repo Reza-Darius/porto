@@ -3,7 +3,7 @@
 use std::{borrow::Borrow, sync::Arc, time::SystemTime};
 
 use derive_more::Display;
-use foyer::{Cache, CacheBuilder, EvictionConfig, LruConfig};
+use foyer::{Cache, CacheBuilder, EvictionConfig, LruConfig, S3FifoConfig};
 use http_body_util::BodyExt;
 use http_cache_semantics::{AfterResponse, CachePolicy};
 use hyper::{Request, Response, body::Bytes};
@@ -185,9 +185,7 @@ struct Store {
 impl Store {
     pub fn new(cap: usize) -> Self {
         let cache = CacheBuilder::new(cap)
-            .with_eviction_config(EvictionConfig::Lru(LruConfig {
-                high_priority_pool_ratio: 0.8,
-            }))
+            .with_eviction_config(EvictionConfig::S3Fifo(S3FifoConfig::default()))
             .build();
         Store {
             inner: Arc::new(StoreInner { store: cache }),
