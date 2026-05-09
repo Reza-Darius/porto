@@ -31,6 +31,7 @@ async fn main() -> Result<()> {
         .route("/", get(echo))
         .route("/cache", get(cache))
         .route("/health", get(health))
+        .route("/comp", get(comp))
         .layer(middleware::from_fn(log_handle));
 
     let mut set: JoinSet<Result<(), anyhow::Error>> = JoinSet::new();
@@ -94,6 +95,13 @@ async fn _hyper(_: hyper::Request<hyper::body::Incoming>) -> http::Response<port
 
 async fn health() -> impl IntoResponse {
     StatusCode::OK
+}
+
+async fn comp() -> Response {
+    Response::builder()
+        .status(StatusCode::OK)
+        .body(Body::from("this is a response body".repeat(10)))
+        .expect("the values are hard coded")
 }
 
 async fn echo() -> Response {

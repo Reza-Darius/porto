@@ -86,17 +86,17 @@ impl Future for UpstreamResponseFuture {
     ) -> std::task::Poll<Self::Output> {
         let this = self.project();
 
-        let t = Instant::now();
+        // let t = Instant::now();
         let r = match std::task::ready!(this.f.poll(cx)) {
             Ok(resp) => {
-                debug!(
-                    elapsed_ms = t.elapsed().as_millis(),
-                    "forwarded message time"
-                );
+                // debug!(
+                //     elapsed_ms = t.elapsed().as_millis(),
+                //     "forwarded message time"
+                // );
                 Ok(resp.map(|r| r.map_err(Into::into).boxed_unsync()))
             }
             Err(e) => {
-                error!(?e, "couldnt send request");
+                // error!(?e, "couldnt send request");
                 Ok(response(StatusCode::INTERNAL_SERVER_ERROR))
             }
         };

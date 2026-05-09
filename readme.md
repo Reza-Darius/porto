@@ -11,12 +11,12 @@ a simple but fast reverse proxy with TLS termination
 - CLI and config file parsing with clap
 - Response caching according to RFC 7234
 - Response compression
+- Health checks
 
 ## WIP
 
 - Rate Limiting
 - Load Balancing
-- Health checks
 - Notifications/Metrics
 
 ## Hello World

@@ -4,7 +4,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use http::{Method, Request, Uri};
+use http::{Method, Request};
+use rand::RngExt;
 use tower::Service;
 use tracing::{debug, error, info, warn};
 
@@ -44,7 +45,7 @@ impl QEntry {
     }
 
     fn reset(&mut self) {
-        self.timestamp = Instant::now()
+        self.timestamp = Instant::now();
     }
 }
 
@@ -246,4 +247,12 @@ pub fn setup_health_service(config: HealthServiceConfig, peers: PeerTable) {
             }
         }
     });
+}
+
+fn jittered(base: Duration, percent: f64) -> Duration {
+    let mut rng = rand::rng();
+
+    let factor = rng.random_range((1.0 - percent)..=(1.0 + percent));
+
+    base.mul_f64(factor)
 }
