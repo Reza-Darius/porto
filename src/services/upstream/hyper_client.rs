@@ -48,7 +48,7 @@ impl<B> Service<Request<B>> for UpstreamService<B>
 where
     B: hyper::body::Body + Send + 'static + Unpin,
     B::Data: Send,
-    B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+    B::Error: Into<BoxError>,
 {
     type Response = Response<Body>;
     type Error = BoxError;

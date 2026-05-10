@@ -33,7 +33,6 @@ impl<S, B> Service<Request<B>> for AddrService<S>
 where
     S: Service<Request<B>, Response = Response<Body>>,
     B: hyper::body::Body,
-    S::Future: Send + 'static,
     S::Error: Into<BoxError>,
 {
     type Response = S::Response;
