@@ -12,10 +12,10 @@ a simple but fast reverse proxy with TLS termination
 - Response caching according to RFC 7234
 - Response compression
 - Health checks
+- Custom rate limiter using a token bucket
 
 ## WIP
 
-- Rate Limiting
 - Load Balancing
 - Notifications/Metrics
 

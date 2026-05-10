@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 use std::{
     collections::{HashMap, hash_map::Entry},
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     sync::Arc,
     task::Poll,
     time::{Duration, Instant},
@@ -11,6 +11,7 @@ use http::{Request, Response, StatusCode};
 use parking_lot::Mutex;
 use pin_project_lite::pin_project;
 use tower::{BoxError, Layer, Service};
+use tracing::{debug, warn};
 
 use crate::utils::{Body, response};
 
@@ -21,6 +22,7 @@ const REFILL_TOKENS: u16 = 2;
 const CLEANUP_INTERVAL: Duration = Duration::from_mins(10);
 const BUCKET_TIMEOUT: Duration = Duration::from_mins(5);
 
+/// an IP based rate limiter using token buckets
 #[derive(Clone)]
 pub struct RateLimitLayer {
     inner: Arc<RateLimiterInner>,
@@ -68,6 +70,7 @@ pub struct RateLimiter<S> {
 
 impl<S> RateLimiter<S> {
     pub fn has_token(&self, addr: SocketAddr) -> bool {
+        let addr = addr.ip();
         match self.rl.map.lock().entry(addr) {
             Entry::Occupied(mut occupied_entry) => {
                 let bucket = occupied_entry.get_mut();
@@ -76,12 +79,15 @@ impl<S> RateLimiter<S> {
 
                 if bucket.tokens > 0 {
                     bucket.tokens -= 1;
+                    debug!(tokens = bucket.tokens, "tokens remaining");
                     true
                 } else {
+                    warn!(%addr, "too many requests");
                     false
                 }
             }
             Entry::Vacant(vacant_entry) => {
+                debug!(%addr, "new bucket");
                 vacant_entry.insert(Bucket::new(BUCKET_SIZE - 1));
                 true
             }
@@ -90,7 +96,7 @@ impl<S> RateLimiter<S> {
 }
 
 struct RateLimiterInner {
-    map: Mutex<HashMap<SocketAddr, Bucket>>,
+    map: Mutex<HashMap<IpAddr, Bucket>>,
 }
 
 impl RateLimiterInner {
@@ -98,10 +104,10 @@ impl RateLimiterInner {
         self.map
             .lock()
             .retain(|_, bucket| bucket.last_update.elapsed() < BUCKET_TIMEOUT);
+        debug!(len = %self.map.lock().len(), "bucket list after cleanup");
     }
 }
 
-// token bucket
 struct Bucket {
     tokens: u16,
     last_update: Instant,
