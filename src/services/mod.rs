@@ -1,6 +1,7 @@
 mod addr;
 mod cache;
 mod health;
+mod ratelimit;
 mod setup;
 mod upstream;
 

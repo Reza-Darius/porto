@@ -222,14 +222,14 @@ pub fn setup_health_service(config: HealthServiceConfig, peers: PeerTable) {
         let new_peers = peers.get_reg_peers();
         let mut hw = HealthService::new(config, peers.clone());
 
-        // we call each peer on startup
         debug!("initializing peers");
+
         let mut count = 0;
         for peer in new_peers {
             hw.register_new_peer(peer).await;
             count += 1;
         }
-        assert_eq!(count, hw.alive_q.len() + hw.dead_q.len());
+        debug_assert_eq!(count, hw.alive_q.len() + hw.dead_q.len());
 
         let mut alive_int = tokio::time::interval(hw.config.alive_check_interval);
         let mut dead_int = tokio::time::interval(hw.config.dead_check_interval);

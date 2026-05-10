@@ -1,9 +1,10 @@
 use std::{any::Any, time::Duration};
 
-use http::Response;
+use http::{Request, Response};
 use http_body_util::BodyExt;
-use hyper::StatusCode;
-use tower::{ServiceBuilder, ServiceExt};
+use hyper::{StatusCode, body::Incoming};
+use tower::{BoxError, ServiceBuilder, ServiceExt, service_fn, util::BoxCloneService};
+use tower_governor::{GovernorError, GovernorLayer, governor::GovernorConfigBuilder};
 use tower_http::{
     catch_panic::CatchPanicLayer, compression::CompressionLayer, timeout::TimeoutLayer,
     trace::TraceLayer,
@@ -15,12 +16,13 @@ use crate::{
     services::{
         addr::AddrServiceLayer,
         cache::ResponseCacheLayer,
+        ratelimit::RateLimitLayer,
         upstream::{
             connection_table::{ConnectionConfig, ConnectionService},
             hyper_client,
         },
     },
-    utils::{Body, HyperService, PeerTable, empty, internal_error},
+    utils::{Body, HyperService, PeerTable, empty, full, internal_error},
 };
 
 pub fn setup_service(config: &PortoConfig) -> HyperService {
@@ -44,8 +46,7 @@ pub fn setup_service(config: &PortoConfig) -> HyperService {
 }
 
 pub fn setup_service4(config: &PortoConfig, peers: PeerTable) -> HyperService {
-    // building THE tower (tm)
-    let tower = ServiceBuilder::new()
+    ServiceBuilder::new()
         .layer(TraceLayer::new_for_http())
         .layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,
@@ -53,18 +54,12 @@ pub fn setup_service4(config: &PortoConfig, peers: PeerTable) -> HyperService {
         ))
         .layer(CatchPanicLayer::custom(handle_panic))
         .layer(CompressionLayer::new().gzip(true))
+        .layer(RateLimitLayer::new())
         .layer(AddrServiceLayer::new(peers))
         .layer(ResponseCacheLayer::new(1024))
-        .service(ConnectionService::new(ConnectionConfig::default()));
-
-    // erasing types
-    tower
-        .map_response(|resp| {
-            let resp = resp.map(|body| body.boxed_unsync());
-            info!("sending {resp:?}");
-            resp
-        })
-        .map_err(anyhow::Error::from_boxed) // boxerror doesnt work and i cant figure out why
+        .service(ConnectionService::new(ConnectionConfig::default()))
+        .map_err(anyhow::Error::from_boxed)
+        .map_response(|resp: http::Response<_>| resp.map(|body| body.boxed_unsync()))
         .boxed_clone()
 }
 
