@@ -1,15 +1,13 @@
 use std::{any::Any, time::Duration};
 
-use http::{Request, Response};
+use http::Response;
 use http_body_util::BodyExt;
-use hyper::{StatusCode, body::Incoming};
-use tower::{BoxError, ServiceBuilder, ServiceExt, service_fn, util::BoxCloneService};
-use tower_governor::{GovernorError, GovernorLayer, governor::GovernorConfigBuilder};
+use hyper::StatusCode;
+use tower::{ServiceBuilder, ServiceExt};
 use tower_http::{
-    catch_panic::CatchPanicLayer, compression::CompressionLayer, timeout::TimeoutLayer,
-    trace::TraceLayer,
+    catch_panic::CatchPanicLayer, compression::CompressionLayer, limit::RequestBodyLimitLayer,
+    timeout::TimeoutLayer, trace::TraceLayer,
 };
-use tracing::{debug, info};
 
 use crate::{
     config::PortoConfig,
@@ -22,7 +20,7 @@ use crate::{
             hyper_client,
         },
     },
-    utils::{Body, HyperService, PeerTable, empty, full, internal_error},
+    utils::{Body, HyperService, PeerTable, internal_error},
 };
 
 pub fn setup_service(config: &PortoConfig) -> HyperService {
@@ -58,6 +56,7 @@ pub fn setup_service4(config: &PortoConfig, peers: PeerTable) -> HyperService {
         .layer(AddrServiceLayer::new(peers))
         .layer(ResponseCacheLayer::new(1024))
         .service(ConnectionService::new(ConnectionConfig::default()))
+        // using a BoxError breaks the whole thing and i cant figure out why
         .map_err(anyhow::Error::from_boxed)
         .map_response(|resp: http::Response<_>| resp.map(|body| body.boxed_unsync()))
         .boxed_clone()

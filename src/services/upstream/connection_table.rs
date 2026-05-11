@@ -9,12 +9,7 @@ use anyhow::anyhow;
 use http::{Request, Response, StatusCode};
 use hyper::body::Incoming;
 use hyper_util::{
-    client::pool::{
-        self, cache,
-        map::{self, Map},
-        negotiate::{self, builder},
-        singleton::Singleton,
-    },
+    client::pool::{cache, map::Map, singleton::Singleton},
     rt::TokioExecutor,
 };
 use parking_lot::Mutex;
@@ -22,16 +17,13 @@ use tower::{
     BoxError, Service, ServiceBuilder, ServiceExt, layer::layer_fn, service_fn,
     util::BoxCloneService,
 };
-use tracing::{debug, error, trace};
+use tracing::{debug, error};
 
 use super::{
     connector::UpstreamConnector,
     http::{Http1Connect, Http2Connect},
 };
-use crate::{
-    services::upstream::connector::Upstream,
-    utils::{Body, BoxFut, HyperService, Peer, PeerAddr, PeerProto, response},
-};
+use crate::utils::{Body, BoxFut, Peer, PeerAddr, PeerProto, response};
 
 #[derive(Clone)]
 pub struct ConnectionService {

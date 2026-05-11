@@ -1,14 +1,32 @@
-use std::future::Ready;
+use std::{future::Ready, net::SocketAddr};
 
 use anyhow::Result;
-use hyper::{Request, Response, StatusCode, body::Incoming};
+use hyper::{Request, Response, StatusCode, body::Incoming, server::conn::http1};
+use hyper_util::{rt::TokioIo, service::TowerToHyperService};
+use tokio::net::TcpListener;
 use tower::Service;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
-use crate::{
-    acme::{AcmeWorkerMode, PortoTLS, acme_worker},
-    utils::*,
-};
+use crate::{acme::PortoTLS, utils::*};
+
+pub fn setup_acme_server(addr: SocketAddr, store: PortoTLS) {
+    tokio::spawn(async move {
+        let listener = TcpListener::bind(addr).await.inspect_err(|e| error!(%e))?;
+        let svc = Http1ChallSvc::new(store);
+
+        info!("acme server listening on {addr}");
+
+        while let Ok(con) = listener.accept().await {
+            let svc = TowerToHyperService::new(svc.clone());
+
+            http1::Builder::new()
+                .serve_connection(TokioIo::new(con.0), svc)
+                .await
+                .inspect_err(|e| error!(%e))?;
+        }
+        Ok::<(), anyhow::Error>(())
+    });
+}
 
 #[derive(Clone)]
 pub struct Http1ChallSvc {
@@ -16,8 +34,7 @@ pub struct Http1ChallSvc {
 }
 
 impl Http1ChallSvc {
-    pub fn init(store: PortoTLS, mode: AcmeWorkerMode) -> Self {
-        tokio::spawn(acme_worker(store.clone(), mode));
+    pub fn new(store: PortoTLS) -> Self {
         Http1ChallSvc { store }
     }
 }

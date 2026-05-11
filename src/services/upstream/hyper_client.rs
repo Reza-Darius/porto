@@ -5,9 +5,7 @@ use hyper::{Request, Response};
 use hyper_util::client::legacy::{Client, ResponseFuture};
 use hyper_util::rt::TokioTimer;
 use pin_project_lite::pin_project;
-use tokio::time::Instant;
 use tower::{BoxError, Service};
-use tracing::{debug, error};
 
 use super::connector::UpstreamConnector;
 use crate::utils::*;

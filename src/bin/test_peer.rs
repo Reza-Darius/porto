@@ -1,4 +1,4 @@
-use std::{convert::Infallible, ops::Deref};
+use std::ops::Deref;
 
 use anyhow::Result;
 use axum::{

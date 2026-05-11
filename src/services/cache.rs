@@ -3,7 +3,7 @@
 use std::{borrow::Borrow, sync::Arc, time::SystemTime};
 
 use derive_more::Display;
-use foyer::{Cache, CacheBuilder, EvictionConfig, LruConfig, S3FifoConfig};
+use foyer::{Cache, CacheBuilder, EvictionConfig, S3FifoConfig};
 use http_body_util::BodyExt;
 use http_cache_semantics::{AfterResponse, CachePolicy};
 use hyper::{Request, Response, body::Bytes};

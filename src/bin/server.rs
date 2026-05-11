@@ -31,7 +31,7 @@ async fn main() -> Result<()> {
 
     let config = setup_config()?;
     let listener = setup_listener(&config);
-    let tls_acceptor = setup_tls_from_file(&config)?;
+    let tls_acceptor = setup_tls_from_file(config.tls.as_ref().unwrap())?;
     let peers = PeerTable::init(&config);
 
     let service = setup_service4(&config, peers.clone());

@@ -27,19 +27,8 @@ pub struct Cli {
 #[derive(Debug, Deserialize, Default)]
 pub struct PortoConfig {
     pub bind: Option<SocketAddr>,
-    #[serde(default = "default_tls")]
-    pub tls: bool,
-    #[serde(default)]
-    pub auto_cert: bool,
-    // for simple TLS
-    pub cert_path: Option<PathBuf>,
-    pub key_path: Option<PathBuf>,
-    // for ACME
-    pub credentials: Option<PathBuf>,
+    pub tls: Option<TlsConfig>,
     proxy: Vec<ProxyConfig>,
-
-    #[serde(skip)]
-    pub debug: bool, // for testing only
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -73,8 +62,47 @@ impl From<ProxyConfig> for Peer {
     }
 }
 
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct TlsConfig {
+    #[serde(rename(deserialize = "tls"))]
+    pub enabled: bool,
+    #[serde(default)]
+    pub auto_cert: bool,
+    // for simple TLS
+    pub cert_path: Option<PathBuf>,
+    pub key_path: Option<PathBuf>,
+    // for ACME
+    pub credentials: Option<PathBuf>,
+    #[serde(skip)]
+    pub debug: bool, // for testing only
+}
+
+impl TlsConfig {
+    pub fn validate(&mut self) -> Result<()> {
+        if self.enabled && (self.cert_path.is_none() || self.key_path.is_none()) {
+            return Err(anyhow!(
+                "TLS set to true, but no cert or key path provided. If you wish to not use TLS pass \"tls = false\" inside the config"
+            ));
+        }
+
+        // we cant have acme enabled and tls disabled, set both to disabled
+        if self.auto_cert && !self.enabled {
+            self.auto_cert = false;
+        }
+
+        Ok(())
+    }
+}
+
 const fn default_tls() -> bool {
     true
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ServiceConfig {
+    lb: bool,
+    health: bool,
+    limit: bool,
 }
 
 #[instrument(err)]
@@ -107,15 +135,8 @@ fn parse_config_file(path: impl AsRef<Path>) -> Result<PortoConfig> {
         .with_context(|| anyhow!("path: {}", path.as_ref().display()))?
         .pipe_as_ref(toml::from_slice)?;
 
-    if config.tls && (config.cert_path.is_none() || config.key_path.is_none()) {
-        return Err(anyhow!(
-            "TLS set to true, but no cert or key path provided. If you wish to not use TLS pass \"tls = false\" inside the config"
-        ));
-    }
-
-    // we cant have acme enabled and tls disabled, set both to disabled
-    if config.auto_cert && !config.tls {
-        config.auto_cert = false;
+    if let Some(tls) = &mut config.tls {
+        tls.validate()?;
     }
 
     if config.proxy.is_empty() {
@@ -134,9 +155,10 @@ mod config_tests {
     fn setup_test_conf(path: &Path) {
         let config = r#"
             bind = "127.0.0.1:3000"
+
+            [tls]
             tls = true
             auto_cert = false
-
             cert_path = "credentials/example_cert.pem"
             key_path = "credentials/example_key.pem"
 
@@ -160,8 +182,8 @@ mod config_tests {
 
         let config = parse_config_file("testporto.toml").unwrap();
 
-        assert!(config.tls);
-        assert!(!config.auto_cert);
+        assert!(config.tls.is_some());
+        assert!(!config.tls.as_ref().unwrap().auto_cert);
         assert_eq!(config.proxy.len(), 2);
         println!("{:?}", config);
 

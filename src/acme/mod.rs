@@ -18,7 +18,10 @@ use rustls::{
 use tokio_rustls::TlsAcceptor;
 use tracing::{debug, error, info, warn};
 
-use crate::{config::PortoConfig, utils::*};
+use crate::{
+    config::{PortoConfig, TlsConfig},
+    utils::*,
+};
 use account::*;
 use helper::*;
 use order::*;
@@ -55,7 +58,7 @@ struct PortoTLSInner {
 }
 
 impl PortoTLS {
-    pub async fn init(config: &PortoConfig, peers: PeerTable) -> Result<Self> {
+    pub async fn init(config: &TlsConfig, peers: PeerTable) -> Result<Self> {
         let path = config
             .credentials
             .clone()
@@ -69,7 +72,7 @@ impl PortoTLS {
         let server_config = setup_rustls_config(resolver.clone());
         let account = get_account(config.debug, &path).await?;
 
-        Ok(PortoTLS {
+        let store = PortoTLS {
             inner: Arc::new(PortoTLSInner {
                 cred_path: path,
                 account,
@@ -80,7 +83,18 @@ impl PortoTLS {
                 resolver,
                 config: Arc::new(server_config),
             }),
-        })
+        };
+
+        tokio::spawn(acme_worker(
+            store.clone(),
+            if config.debug {
+                AcmeWorkerMode::Debug
+            } else {
+                AcmeWorkerMode::Prod
+            },
+        ));
+
+        Ok(store)
     }
 
     /// check for expired certificates inside the in-memory cache
@@ -215,6 +229,8 @@ async fn acme_worker(store: PortoTLS, mode: AcmeWorkerMode) {
 #[cfg(test)]
 mod tests {
 
+    use std::default;
+
     use hyper::server::conn::http1::Builder;
     use hyper_util::rt::TokioIo;
     use hyper_util::service::TowerToHyperService;
@@ -240,18 +256,19 @@ mod tests {
             )
             .init();
 
-        let mut config = PortoConfig::default();
-        config.debug = true;
-        config.credentials = Some(PathBuf::from("credentials"));
+        let tls_config = TlsConfig {
+            debug: true,
+            credentials: Some(PathBuf::from("credentials")),
+            ..Default::default()
+        };
 
         let addr = "0.0.0.0:5002"; // port for pebble ACME server
 
         let domains = PeerTable::try_from(&[("acmetest.com", "1.1.1.1:6767")])?;
 
         let listener = tokio::net::TcpListener::bind(addr).await?;
-        let tls = PortoTLS::init(&config, domains).await.unwrap();
-        let service =
-            TowerToHyperService::new(Http1ChallSvc::init(tls.clone(), AcmeWorkerMode::Debug));
+        let tls = PortoTLS::init(&tls_config, domains).await.unwrap();
+        let service = TowerToHyperService::new(Http1ChallSvc::new(tls.clone()));
 
         info!("test ACME server listening on {addr}");
 

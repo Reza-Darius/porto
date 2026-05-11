@@ -1,7 +1,6 @@
 use std::task::{Poll, ready};
 
-use anyhow::anyhow;
-use http::{Uri, Version};
+use http::Version;
 use hyper::{Request, Response, StatusCode};
 use pin_project_lite::pin_project;
 use tower::{BoxError, Service};
@@ -18,15 +17,6 @@ use crate::utils::*;
 pub struct AddrService<S> {
     table: PeerTable,
     inner: S,
-}
-
-impl<S> AddrService<S> {
-    pub fn new(peers: PeerTable, inner: S) -> Self {
-        AddrService {
-            table: peers,
-            inner,
-        }
-    }
 }
 
 impl<S, B> Service<Request<B>> for AddrService<S>

@@ -35,7 +35,10 @@ impl<B> Drop for Http1Sender<B> {
     }
 }
 
-impl Service<Request<Incoming>> for Http1Sender<Incoming> {
+impl<B> Service<Request<B>> for Http1Sender<B>
+where
+    B: hyper::body::Body + Send + 'static,
+{
     type Response = Response<Body>;
     type Error = BoxError;
     type Future = BoxFut<Self::Response, Self::Error>;
@@ -47,7 +50,7 @@ impl Service<Request<Incoming>> for Http1Sender<Incoming> {
         self.sender.poll_ready(cx).map_err(Into::into)
     }
 
-    fn call(&mut self, req: Request<Incoming>) -> Self::Future {
+    fn call(&mut self, req: Request<B>) -> Self::Future {
         self.last_used = Instant::now();
         let f = self.sender.send_request(req);
         Box::pin(async move {
@@ -182,7 +185,10 @@ impl<B> Drop for Http2Sender<B> {
     }
 }
 
-impl Service<Request<Incoming>> for Http2Sender<Incoming> {
+impl<B> Service<Request<B>> for Http2Sender<B>
+where
+    B: hyper::body::Body + Send + 'static,
+{
     type Response = Response<Body>;
     type Error = BoxError;
     type Future = BoxFut<Self::Response, Self::Error>;
@@ -194,7 +200,7 @@ impl Service<Request<Incoming>> for Http2Sender<Incoming> {
         self.sender.poll_ready(cx).map_err(Into::into)
     }
 
-    fn call(&mut self, req: Request<Incoming>) -> Self::Future {
+    fn call(&mut self, req: Request<B>) -> Self::Future {
         self.last_used = Instant::now();
         let f = self.sender.send_request(req);
         Box::pin(async move {
