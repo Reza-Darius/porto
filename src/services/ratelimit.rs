@@ -17,6 +17,8 @@ use pin_project_lite::pin_project;
 use tower::{BoxError, Layer, Service};
 use tracing::{debug, warn};
 
+use crate::utils::ResponseBody;
+
 const BUCKET_SIZE: u16 = 10;
 const REFILL_INTERVAL: Duration = Duration::from_mins(1);
 const REFILL_TOKENS: u16 = 2;
@@ -150,7 +152,7 @@ where
     S::Error: Into<BoxError>,
     ResB: hyper::body::Body,
 {
-    type Response = Response<RLBody<ResB>>;
+    type Response = Response<ResponseBody<ResB>>;
     type Error = BoxError;
     type Future = RateLimitFuture<S::Future>;
 
@@ -192,7 +194,7 @@ where
     E: Into<BoxError>,
     ResB: hyper::body::Body,
 {
-    type Output = Result<Response<RLBody<ResB>>, BoxError>;
+    type Output = Result<Response<ResponseBody<ResB>>, BoxError>;
 
     fn poll(
         self: std::pin::Pin<&mut Self>,
@@ -203,79 +205,79 @@ where
             EnumProj::Ok { fut } => fut
                 .poll(cx)
                 .map_err(Into::into)
-                .map(|f| f.map(|resp| resp.map(RLBody::new))),
+                .map(|f| f.map(|resp| resp.map(ResponseBody::new))),
             EnumProj::RateLimited => Poll::Ready(Ok(Response::builder()
                 .status(StatusCode::TOO_MANY_REQUESTS)
-                .body(RLBody::with_msg("too many requests"))
-                .unwrap())),
+                .body(ResponseBody::with_msg("too many requests"))
+                .expect("the values are hard coded"))),
         }
     }
 }
 
-pin_project! {
-    pub struct RLBody<B> {
-        #[pin]
-        inner: RLBodyInner<B>
-    }
-}
+// pin_project! {
+//     pub struct RLBody<B> {
+//         #[pin]
+//         inner: RLBodyInner<B>
+//     }
+// }
 
-impl<B> RLBody<B> {
-    fn with_msg(str: &str) -> Self {
-        Self {
-            inner: RLBodyInner::Custom {
-                body: Full::from(str.to_string()),
-            },
-        }
-    }
-    pub(crate) fn new(body: B) -> Self {
-        Self {
-            inner: RLBodyInner::Body { body },
-        }
-    }
-}
+// impl<B> RLBody<B> {
+//     fn with_msg(str: &str) -> Self {
+//         Self {
+//             inner: RLBodyInner::Custom {
+//                 body: Full::from(str.to_string()),
+//             },
+//         }
+//     }
+//     pub(crate) fn new(body: B) -> Self {
+//         Self {
+//             inner: RLBodyInner::Body { body },
+//         }
+//     }
+// }
 
-pin_project! {
-    #[project = BodyProj]
-    enum RLBodyInner<B> {
-        Custom {
-            #[pin]
-            body: Full<Bytes>,
-        },
-        Body {
-            #[pin]
-            body: B
-        }
-    }
-}
+// pin_project! {
+//     #[project = BodyProj]
+//     enum RLBodyInner<B> {
+//         Custom {
+//             #[pin]
+//             body: Full<Bytes>,
+//         },
+//         Body {
+//             #[pin]
+//             body: B
+//         }
+//     }
+// }
 
-impl<B> hyper::body::Body for RLBody<B>
-where
-    B: hyper::body::Body<Data = Bytes>,
-{
-    type Data = Bytes;
-    type Error = B::Error;
+// impl<B> hyper::body::Body for RLBody<B>
+// where
+//     B: hyper::body::Body<Data = Bytes>,
+// {
+//     type Data = Bytes;
+//     type Error = B::Error;
 
-    fn poll_frame(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
-        match self.project().inner.project() {
-            BodyProj::Custom { body } => body.poll_frame(cx).map_err(|err| match err {}),
-            BodyProj::Body { body } => body.poll_frame(cx),
-        }
-    }
+//     fn poll_frame(
+//         self: Pin<&mut Self>,
+//         cx: &mut Context<'_>,
+//     ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+//         match self.project().inner.project() {
+//             BodyProj::Custom { body } => body.poll_frame(cx).map_err(|err| match err {}),
+//             BodyProj::Body { body } => body.poll_frame(cx),
+//         }
+//     }
 
-    fn is_end_stream(&self) -> bool {
-        match &self.inner {
-            RLBodyInner::Custom { body } => body.is_end_stream(),
-            RLBodyInner::Body { body } => body.is_end_stream(),
-        }
-    }
+//     fn is_end_stream(&self) -> bool {
+//         match &self.inner {
+//             RLBodyInner::Custom { body } => body.is_end_stream(),
+//             RLBodyInner::Body { body } => body.is_end_stream(),
+//         }
+//     }
 
-    fn size_hint(&self) -> SizeHint {
-        match &self.inner {
-            RLBodyInner::Custom { body } => body.size_hint(),
-            RLBodyInner::Body { body } => body.size_hint(),
-        }
-    }
-}
+//     fn size_hint(&self) -> SizeHint {
+//         match &self.inner {
+//             RLBodyInner::Custom { body } => body.size_hint(),
+//             RLBodyInner::Body { body } => body.size_hint(),
+//         }
+//     }
+// }

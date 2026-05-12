@@ -1,6 +1,14 @@
-use std::any::Any;
+use std::{
+    any::Any,
+    pin::Pin,
+    task::{Context, Poll},
+};
 
+use axum::body::Bytes;
 use http::{Response, StatusCode};
+use http_body_util::Full;
+use hyper::body::{Frame, SizeHint};
+use pin_project_lite::pin_project;
 use tower::BoxError;
 
 use crate::utils::{Body, BoxFut, internal_error, response};
@@ -38,4 +46,76 @@ pub fn handle_panic(err: Box<dyn Any + Send + 'static>) -> Response<Body> {
     tracing::error!(details);
 
     internal_error()
+}
+
+/*
+ * helper struct and function for service futures allowing to pass the nested
+ * response or return a HTTP message without allocation
+ */
+pin_project! {
+    pub struct ResponseBody<B> {
+        #[pin]
+        inner: ResponseBodyInner<B>
+    }
+}
+
+impl<B> ResponseBody<B> {
+    pub(crate) fn with_msg(str: &str) -> Self {
+        Self {
+            inner: ResponseBodyInner::Custom {
+                body: Full::from(str.to_string()),
+            },
+        }
+    }
+    pub(crate) fn new(body: B) -> Self {
+        Self {
+            inner: ResponseBodyInner::Body { body },
+        }
+    }
+}
+
+pin_project! {
+    #[project = BodyProj]
+    pub enum ResponseBodyInner<B> {
+        Custom {
+            #[pin]
+            body: Full<Bytes>,
+        },
+        Body {
+            #[pin]
+            body: B
+        }
+    }
+}
+
+impl<B> hyper::body::Body for ResponseBody<B>
+where
+    B: hyper::body::Body<Data = Bytes>,
+{
+    type Data = Bytes;
+    type Error = B::Error;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+        match self.project().inner.project() {
+            BodyProj::Custom { body } => body.poll_frame(cx).map_err(|err| match err {}),
+            BodyProj::Body { body } => body.poll_frame(cx),
+        }
+    }
+
+    fn is_end_stream(&self) -> bool {
+        match &self.inner {
+            ResponseBodyInner::Custom { body } => body.is_end_stream(),
+            ResponseBodyInner::Body { body } => body.is_end_stream(),
+        }
+    }
+
+    fn size_hint(&self) -> SizeHint {
+        match &self.inner {
+            ResponseBodyInner::Custom { body } => body.size_hint(),
+            ResponseBodyInner::Body { body } => body.size_hint(),
+        }
+    }
 }

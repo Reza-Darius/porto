@@ -114,7 +114,6 @@ impl Default for TlsConfig {
 pub struct ServiceConfig {
     pub health: bool,
     pub limit: bool,
-    pub comp: bool,
     pub cache: bool,
 }
 
@@ -123,7 +122,6 @@ impl Default for ServiceConfig {
         ServiceConfig {
             health: true,
             limit: true,
-            comp: true,
             cache: true,
         }
     }

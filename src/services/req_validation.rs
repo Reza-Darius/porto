@@ -5,13 +5,15 @@ use std::{
 };
 
 use axum::body::Bytes;
-use http::{Request, Response, StatusCode, header::CONTENT_LENGTH};
+use http::{Request, Response, StatusCode};
 use http_body_util::Full;
 use hyper::body::{Frame, SizeHint};
 use pin_project_lite::pin_project;
 use thiserror::Error;
 use tower::{BoxError, Layer, Service};
 use tracing::warn;
+
+use crate::utils::ResponseBody;
 
 const BODY_SIZE_LIMIT: u32 = 1 << 20; // 1 MB
 const HEADER_SIZE_LIMIT: u32 = (1 << 10) * 8; // 8 Kb
@@ -57,19 +59,6 @@ where
     }
 
     fn call(&mut self, req: Request<ReqB>) -> Self::Future {
-        let Some(c_len) = req.headers().get(CONTENT_LENGTH) else {
-            return ReqValidationFuture::Err {
-                e: ReqValidationError::NoContentField,
-            };
-        };
-
-        let req_len = c_len.to_str().unwrap().parse::<u32>().unwrap();
-        if req_len > BODY_SIZE_LIMIT {
-            return ReqValidationFuture::Err {
-                e: ReqValidationError::BodySizeExceeded,
-            };
-        }
-
         ReqValidationFuture::Ok {
             fut: self.inner.call(req),
         }
@@ -88,8 +77,6 @@ pin_project! {
 enum ReqValidationError {
     #[error("Request header are too large")]
     HeaderSizeExceeded,
-    #[error("Request body is too large")]
-    BodySizeExceeded,
     #[error("No content-length header found")]
     NoContentField,
 }
@@ -118,8 +105,7 @@ where
                     ReqValidationError::HeaderSizeExceeded => {
                         StatusCode::REQUEST_HEADER_FIELDS_TOO_LARGE
                     }
-                    ReqValidationError::BodySizeExceeded => StatusCode::PAYLOAD_TOO_LARGE,
-                    ReqValidationError::NoContentField => todo!(),
+                    ReqValidationError::NoContentField => StatusCode::BAD_REQUEST,
                 };
                 warn!(resp = %status, "invalid request");
                 Poll::Ready(Ok(Response::builder()
@@ -131,70 +117,70 @@ where
     }
 }
 
-pin_project! {
-    pub struct ResponseBody<B> {
-        #[pin]
-        inner: ResponseBodyInner<B>
-    }
-}
+// pin_project! {
+//     pub struct ResponseBody<B> {
+//         #[pin]
+//         inner: ResponseBodyInner<B>
+//     }
+// }
 
-impl<B> ResponseBody<B> {
-    fn with_msg(str: &str) -> Self {
-        Self {
-            inner: ResponseBodyInner::Custom {
-                body: Full::from(str.to_string()),
-            },
-        }
-    }
-    pub(crate) fn new(body: B) -> Self {
-        Self {
-            inner: ResponseBodyInner::Body { body },
-        }
-    }
-}
+// impl<B> ResponseBody<B> {
+//     fn with_msg(str: &str) -> Self {
+//         Self {
+//             inner: ResponseBodyInner::Custom {
+//                 body: Full::from(str.to_string()),
+//             },
+//         }
+//     }
+//     pub(crate) fn new(body: B) -> Self {
+//         Self {
+//             inner: ResponseBodyInner::Body { body },
+//         }
+//     }
+// }
 
-pin_project! {
-    #[project = BodyProj]
-    enum ResponseBodyInner<B> {
-        Custom {
-            #[pin]
-            body: Full<Bytes>,
-        },
-        Body {
-            #[pin]
-            body: B
-        }
-    }
-}
+// pin_project! {
+//     #[project = BodyProj]
+//     enum ResponseBodyInner<B> {
+//         Custom {
+//             #[pin]
+//             body: Full<Bytes>,
+//         },
+//         Body {
+//             #[pin]
+//             body: B
+//         }
+//     }
+// }
 
-impl<B> hyper::body::Body for ResponseBody<B>
-where
-    B: hyper::body::Body<Data = Bytes>,
-{
-    type Data = Bytes;
-    type Error = B::Error;
+// impl<B> hyper::body::Body for ResponseBody<B>
+// where
+//     B: hyper::body::Body<Data = Bytes>,
+// {
+//     type Data = Bytes;
+//     type Error = B::Error;
 
-    fn poll_frame(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
-        match self.project().inner.project() {
-            BodyProj::Custom { body } => body.poll_frame(cx).map_err(|err| match err {}),
-            BodyProj::Body { body } => body.poll_frame(cx),
-        }
-    }
+//     fn poll_frame(
+//         self: Pin<&mut Self>,
+//         cx: &mut Context<'_>,
+//     ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+//         match self.project().inner.project() {
+//             BodyProj::Custom { body } => body.poll_frame(cx).map_err(|err| match err {}),
+//             BodyProj::Body { body } => body.poll_frame(cx),
+//         }
+//     }
 
-    fn is_end_stream(&self) -> bool {
-        match &self.inner {
-            ResponseBodyInner::Custom { body } => body.is_end_stream(),
-            ResponseBodyInner::Body { body } => body.is_end_stream(),
-        }
-    }
+//     fn is_end_stream(&self) -> bool {
+//         match &self.inner {
+//             ResponseBodyInner::Custom { body } => body.is_end_stream(),
+//             ResponseBodyInner::Body { body } => body.is_end_stream(),
+//         }
+//     }
 
-    fn size_hint(&self) -> SizeHint {
-        match &self.inner {
-            ResponseBodyInner::Custom { body } => body.size_hint(),
-            ResponseBodyInner::Body { body } => body.size_hint(),
-        }
-    }
-}
+//     fn size_hint(&self) -> SizeHint {
+//         match &self.inner {
+//             ResponseBodyInner::Custom { body } => body.size_hint(),
+//             ResponseBodyInner::Body { body } => body.size_hint(),
+//         }
+//     }
+// }
