@@ -57,17 +57,6 @@ pub fn setup_service4(config: &PortoConfig) -> HyperService {
         // TODO: account for missing health service in peer table
     }
 
-    // compression changes the response body
-    let comp = layer_fn(|svc| {
-        Compression::new(svc)
-            .gzip(true)
-            .map_response(|resp| resp.map(|b| b.boxed_unsync()))
-    });
-
-    let req_limit = layer_fn(|svc| {
-        RequestBodyLimit::new(svc, 1024).map_response(|resp| resp.map(|b| b.boxed_unsync()))
-    });
-
     ServiceBuilder::new()
         .layer(TraceLayer::new_for_http())
         .layer(TimeoutLayer::with_status_code(
@@ -76,9 +65,9 @@ pub fn setup_service4(config: &PortoConfig) -> HyperService {
         ))
         .layer(CatchPanicLayer::custom(handle_panic))
         .layer(option_layer(config.service.limit.then(RateLimitLayer::new)))
-        // .layer(ReqValidationLayer::new())
-        .layer(req_limit)
-        .layer(option_layer(config.service.comp.then_some(comp)))
+        .layer(ReqValidationLayer::new())
+        .layer(RequestBodyLimitLayer::new(1024))
+        .layer_fn(|svc| Compression::new(svc).gzip(true))
         .layer(AddrServiceLayer::new(peers))
         .layer(option_layer(
             config.service.cache.then(|| ResponseCacheLayer::new(1024)),

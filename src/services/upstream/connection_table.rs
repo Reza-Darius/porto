@@ -124,7 +124,7 @@ type HttpClient<B> = BoxCloneService<Request<B>, Response<Body>, BoxError>;
 /// register a new HTTP1 client
 fn new_http1_client<B>(addr: PeerAddr, pool: &ConnectionService<B>) -> HttpClient<B>
 where
-    B: hyper::body::Body + Send + 'static + Unpin,
+    B: hyper::body::Body + Send + 'static,
     B::Data: Send,
     B::Error: Into<BoxError>,
 {

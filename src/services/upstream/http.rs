@@ -9,6 +9,7 @@ use hyper::client::conn::http1::SendRequest;
 use hyper::client::conn::http2::SendRequest as SendRequest2;
 use hyper::{Request, Response};
 use hyper_util::rt::{TokioExecutor, TokioIo};
+use tokio::pin;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio_util::sync::PollSemaphore;
 use tower::{BoxError, Service};
@@ -196,7 +197,7 @@ impl<B> Drop for Http2Sender<B> {
 
 impl<B> Service<Request<B>> for Http2Sender<B>
 where
-    B: hyper::body::Body + Send + 'static + Unpin,
+    B: hyper::body::Body + Send + 'static,
     B::Data: Send,
     B::Error: Into<BoxError>,
 {

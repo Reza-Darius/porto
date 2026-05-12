@@ -7,7 +7,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+use axum::body::Bytes;
 use http::{Request, Response, StatusCode};
+use http_body_util::Full;
 use parking_lot::Mutex;
 use pin_project_lite::pin_project;
 use tower::{BoxError, Layer, Service};
@@ -142,12 +144,13 @@ impl Bucket {
     }
 }
 
-impl<S, B> Service<Request<B>> for RateLimiter<S>
+impl<S, ReqB, ResB> Service<Request<ReqB>> for RateLimiter<S>
 where
-    S: Service<Request<B>, Response = Response<Body>>,
+    S: Service<Request<ReqB>, Response = Response<ResB>>,
     S::Error: Into<BoxError>,
+    ResB: hyper::body::Body,
 {
-    type Response = Response<Body>;
+    type Response = S::Response;
     type Error = BoxError;
     type Future = RateLimitFuture<S::Future>;
 
@@ -158,7 +161,7 @@ where
         self.inner.poll_ready(cx).map_err(Into::into)
     }
 
-    fn call(&mut self, req: Request<B>) -> Self::Future {
+    fn call(&mut self, req: Request<ReqB>) -> Self::Future {
         let addr = req
             .extensions()
             .get::<SocketAddr>()
@@ -182,12 +185,13 @@ pin_project! {
     }
 }
 
-impl<F, E> Future for RateLimitFuture<F>
+impl<F, E, B> Future for RateLimitFuture<F>
 where
-    F: Future<Output = Result<Response<Body>, E>>,
+    F: Future<Output = Result<Response<B>, E>>,
     E: Into<BoxError>,
+    B: hyper::body::Body,
 {
-    type Output = Result<Response<Body>, BoxError>;
+    type Output = Result<Response<B>, BoxError>;
 
     fn poll(
         self: std::pin::Pin<&mut Self>,
@@ -196,7 +200,48 @@ where
         let this = self.project();
         match this {
             EnumProj::Ok { fut } => fut.poll(cx).map_err(Into::into),
-            EnumProj::RateLimited => Poll::Ready(Ok(response(StatusCode::TOO_MANY_REQUESTS))),
+            EnumProj::RateLimited => {
+                // let mut res = Response::new(B::default());
+                // *res.status_mut() = StatusCode::TOO_MANY_REQUESTS;
+                // Poll::Ready(Ok(res))
+                todo!()
+            }
         }
     }
 }
+
+// pin_project! {
+//     pub struct ResponseBody<B> {
+//         #[pin]
+//         inner: ResponseBodyInner<B>
+//     }
+// }
+
+// impl<B> ResponseBody<B> {
+//     fn payload_too_large() -> Self {
+//         Self {
+//             inner: ResponseBodyInner::PayloadTooLarge {
+//                 body: Full::from(BODY),
+//             },
+//         }
+//     }
+//     pub(crate) fn new(body: B) -> Self {
+//         Self {
+//             inner: ResponseBodyInner::Body { body },
+//         }
+//     }
+// }
+
+// pin_project! {
+//     #[project = BodyProj]
+//     enum ResponseBodyInner<B> {
+//         PayloadTooLarge {
+//             #[pin]
+//             body: Full<Bytes>,
+//         },
+//         Body {
+//             #[pin]
+//             body: B
+//         }
+//     }
+// }
