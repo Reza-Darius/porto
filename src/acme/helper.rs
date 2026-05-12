@@ -6,29 +6,7 @@ use tap::Pipe;
 use time::OffsetDateTime;
 use x509_parser::pem::{Pem, parse_x509_pem};
 
-use crate::{acme::RENEWAL_THRESHHOLD, utils::CertChainPem};
-
-pub fn should_renew(cert_pem: &CertChainPem) -> bool {
-    let (_, pem) = parse_x509_pem(cert_pem.as_str().as_bytes()).unwrap();
-    let cert = pem.parse_x509().unwrap();
-
-    let not_after = cert.validity().not_after.timestamp();
-    let now = OffsetDateTime::now_utc().unix_timestamp();
-
-    let threshhold = not_after - RENEWAL_THRESHHOLD;
-
-    now >= threshhold
-}
-
-pub fn is_expired(cert_pem: &CertChainPem) -> bool {
-    let (_, pem) = parse_x509_pem(cert_pem.as_str().as_bytes()).unwrap();
-    let cert = pem.parse_x509().unwrap();
-
-    let not_after = cert.validity().not_after.timestamp();
-    let now = OffsetDateTime::now_utc().unix_timestamp();
-
-    now >= not_after
-}
+use crate::utils::CertChainPem;
 
 pub fn read_pem_file(path: impl AsRef<Path>) -> Result<Pem> {
     path.as_ref()

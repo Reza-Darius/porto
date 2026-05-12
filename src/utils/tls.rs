@@ -2,7 +2,9 @@ use std::borrow::Borrow;
 
 use derive_more::{AsRef, Display, From};
 use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
 use tokio::net::TcpStream;
+use x509_parser::pem::parse_x509_pem;
 
 /// checks for client hello
 pub async fn is_tls(stream: &TcpStream) -> bool {
@@ -13,6 +15,9 @@ pub async fn is_tls(stream: &TcpStream) -> bool {
         _ => false,
     }
 }
+
+const RENEWAL_THRESHOLD_DAYS: i64 = 30;
+const RENEWAL_THRESHHOLD: i64 = 60 * 60 * 24 * RENEWAL_THRESHOLD_DAYS;
 
 /// PEM encoded certificate chain
 #[derive(Debug, Clone, Display, Hash, Eq, PartialEq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -26,6 +31,28 @@ impl CertChainPem {
 
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    pub fn should_renew(&self) -> bool {
+        let (_, pem) = parse_x509_pem(self.as_str().as_bytes()).unwrap();
+        let cert = pem.parse_x509().unwrap();
+
+        let not_after = cert.validity().not_after.timestamp();
+        let now = OffsetDateTime::now_utc().unix_timestamp();
+
+        let threshhold = not_after - RENEWAL_THRESHHOLD;
+
+        now >= threshhold
+    }
+
+    pub fn is_expired(&self) -> bool {
+        let (_, pem) = parse_x509_pem(self.as_str().as_bytes()).unwrap();
+        let cert = pem.parse_x509().unwrap();
+
+        let not_after = cert.validity().not_after.timestamp();
+        let now = OffsetDateTime::now_utc().unix_timestamp();
+
+        now >= not_after
     }
 }
 

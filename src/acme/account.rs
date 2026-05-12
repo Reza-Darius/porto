@@ -9,7 +9,7 @@ static BINCODE_CONFIG: Configuration = bincode::config::standard();
 
 /// attempts to open a "cred_path/account" file otherwise creates a new account
 ///
-/// if debug = true it will create a pebble test account
+/// if debug == true it will create a pebble test account
 #[instrument(err, skip_all)]
 pub async fn get_account(debug: bool, cred_path: impl AsRef<Path>) -> Result<Account> {
     if debug {

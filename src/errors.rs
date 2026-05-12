@@ -11,6 +11,7 @@ pub enum ProxyError {
 }
 
 pub trait TraceErr<T, E> {
+    /// simple helper to emit a tracing error when Err(e)
     fn trace_err(self) -> Result<T, E>;
 }
 

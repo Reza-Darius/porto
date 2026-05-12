@@ -27,8 +27,6 @@ use helper::*;
 use order::*;
 use resolver::*;
 
-const RENEWAL_THRESHOLD_DAYS: i64 = 30;
-const RENEWAL_THRESHHOLD: i64 = 60 * 60 * 24 * RENEWAL_THRESHOLD_DAYS;
 const CHECK_INTERVAL_HOURS: u64 = 24;
 
 const CERT_FILENAME: &str = "acme_cert.pem";
@@ -105,7 +103,7 @@ impl PortoTLS {
 
         let expired_domains: Vec<_> = guard
             .iter()
-            .filter(|e| should_renew(&e.1.0))
+            .filter(|e| e.1.0.should_renew())
             .map(|e| e.0.clone())
             .collect();
 
@@ -142,7 +140,7 @@ impl PortoTLS {
     fn add_to_resolver(&self, domain: &Domain, certs: CertChainPem, key: KeyPem) -> Result<()> {
         debug!(%domain, "adding domain to resolver");
 
-        if is_expired(&certs) {
+        if certs.is_expired() {
             return Err(anyhow!("cant register expired certificates!"));
         }
 

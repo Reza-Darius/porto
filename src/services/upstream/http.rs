@@ -1,3 +1,4 @@
+use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::time::Instant;
@@ -38,6 +39,8 @@ impl<B> Drop for Http1Sender<B> {
 impl<B> Service<Request<B>> for Http1Sender<B>
 where
     B: hyper::body::Body + Send + 'static,
+    B::Data: Send,
+    B::Error: Into<BoxError>,
 {
     type Response = Response<Body>;
     type Error = BoxError;
@@ -63,45 +66,51 @@ where
 
 /// a service to establish a connection to a backend via UDS or TCP
 #[derive(Debug)]
-pub struct Http1Connect<S> {
+pub struct Http1Connect<S, B> {
     /// number of active connections, for debug purposes mainly
     n_connections: Arc<AtomicU16>,
     semaphore: PollSemaphore,
     permit: Option<OwnedSemaphorePermit>,
     inner: S,
+    phantom: PhantomData<B>,
 }
 
 #[allow(clippy::new_without_default)]
-impl<S> Http1Connect<S> {
+impl<S, B> Http1Connect<S, B> {
     pub fn new(max_connections: usize, inner: S) -> Self {
         Http1Connect {
             n_connections: Arc::new(0.into()),
             semaphore: PollSemaphore::new(Arc::new(Semaphore::new(max_connections))),
             permit: None,
             inner,
+            phantom: PhantomData,
         }
     }
 }
 
 // clone the connector without an acquired permit
-impl<S: Clone> Clone for Http1Connect<S> {
+impl<S: Clone, B> Clone for Http1Connect<S, B> {
     fn clone(&self) -> Self {
         Self {
             n_connections: self.n_connections.clone(),
             semaphore: self.semaphore.clone(),
             permit: None,
             inner: self.inner.clone(),
+            phantom: PhantomData,
         }
     }
 }
 
-impl<S> Service<PeerAddr> for Http1Connect<S>
+impl<S, B> Service<PeerAddr> for Http1Connect<S, B>
 where
     S: Service<PeerAddr, Response = Upstream> + Clone + Send + 'static,
     S::Error: Into<BoxError>,
     S::Future: Send + 'static,
+    B: hyper::body::Body + Send + 'static,
+    B::Data: Send,
+    B::Error: Into<BoxError>,
 {
-    type Response = Http1Sender<Incoming>;
+    type Response = Http1Sender<B>;
     type Error = BoxError;
     type Future = BoxFut<Self::Response, Self::Error>;
 
@@ -187,7 +196,9 @@ impl<B> Drop for Http2Sender<B> {
 
 impl<B> Service<Request<B>> for Http2Sender<B>
 where
-    B: hyper::body::Body + Send + 'static,
+    B: hyper::body::Body + Send + 'static + Unpin,
+    B::Data: Send,
+    B::Error: Into<BoxError>,
 {
     type Response = Response<Body>;
     type Error = BoxError;
@@ -214,30 +225,46 @@ where
 /// a service to establish a connection to a backend via UDS or TCP
 ///
 /// for HTTP2 we can ommit the semaphore because we  multiplex over a single connection
-#[derive(Debug, Clone)]
-pub struct Http2Connect<S> {
+#[derive(Debug)]
+pub struct Http2Connect<S, B> {
     /// number of active connections
     n_connections: Arc<AtomicU16>,
     inner: S,
+    phantom: PhantomData<B>,
 }
 
 #[allow(clippy::new_without_default)]
-impl<S> Http2Connect<S> {
+impl<S, B> Http2Connect<S, B> {
     pub fn new(inner: S) -> Self {
         Http2Connect {
             n_connections: Arc::new(0.into()),
             inner,
+            phantom: PhantomData,
         }
     }
 }
 
-impl<S> Service<PeerAddr> for Http2Connect<S>
+// clone the connector without an acquired permit
+impl<S: Clone, B> Clone for Http2Connect<S, B> {
+    fn clone(&self) -> Self {
+        Self {
+            n_connections: self.n_connections.clone(),
+            inner: self.inner.clone(),
+            phantom: PhantomData,
+        }
+    }
+}
+
+impl<S, B> Service<PeerAddr> for Http2Connect<S, B>
 where
     S: Service<PeerAddr, Response = Upstream> + Clone + Send + 'static,
     S::Error: Into<BoxError>,
     S::Future: Send + 'static,
+    B: hyper::body::Body + Send + 'static + Unpin,
+    B::Data: Send,
+    B::Error: Into<BoxError>,
 {
-    type Response = Http2Sender<Incoming>;
+    type Response = Http2Sender<B>;
     type Error = BoxError;
     type Future = BoxFut<Self::Response, Self::Error>;
 

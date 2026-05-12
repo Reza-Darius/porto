@@ -9,7 +9,7 @@ use rand::RngExt;
 use tower::Service;
 use tracing::{debug, error, info, warn};
 
-use crate::{services::upstream::hyper_client::UpstreamService, utils::*};
+use crate::{errors::TraceErr, services::upstream::hyper_client::UpstreamService, utils::*};
 
 // this is a singleton running in the background
 struct HealthService {
@@ -164,11 +164,7 @@ impl HealthService {
     }
 
     async fn check_peer_alive(&mut self, peer: &Peer) -> bool {
-        let uri = peer
-            .addr
-            .to_uri("/health")
-            .inspect_err(|e| error!(%e))
-            .unwrap();
+        let uri = peer.addr.to_uri("/health").trace_err().unwrap();
 
         let mut req = Request::builder()
             .method(Method::GET)

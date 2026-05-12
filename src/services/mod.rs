@@ -2,8 +2,9 @@ mod addr;
 mod cache;
 mod health;
 mod ratelimit;
+mod req_validation;
 mod setup;
 mod upstream;
 
 pub use health::*;
-pub use setup::{setup_service, setup_service4};
+pub use setup::setup_service4;
