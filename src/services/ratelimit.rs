@@ -34,7 +34,7 @@ impl<S> Layer<S> for RateLimitLayer {
     fn layer(&self, inner: S) -> Self::Service {
         RateLimiter {
             rl: self.inner.clone(),
-            svc: inner,
+            inner,
         }
     }
 }
@@ -47,14 +47,12 @@ impl RateLimitLayer {
 
         let rl_clone = rl.clone();
 
+        // background worker to clean up stale buckets
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(CLEANUP_INTERVAL);
             loop {
-                tokio::select! {
-                    _ = interval.tick() => {
-                        rl_clone.cleanup();
-                    }
-                }
+                interval.tick().await;
+                rl_clone.cleanup();
             }
         });
 
@@ -65,7 +63,7 @@ impl RateLimitLayer {
 #[derive(Clone)]
 pub struct RateLimiter<S> {
     rl: Arc<RateLimiterInner>,
-    svc: S,
+    inner: S,
 }
 
 impl<S> RateLimiter<S> {
@@ -144,9 +142,9 @@ impl Bucket {
     }
 }
 
-impl<S, ReqB> Service<Request<ReqB>> for RateLimiter<S>
+impl<S, B> Service<Request<B>> for RateLimiter<S>
 where
-    S: Service<Request<ReqB>, Response = Response<Body>>,
+    S: Service<Request<B>, Response = Response<Body>>,
     S::Error: Into<BoxError>,
 {
     type Response = Response<Body>;
@@ -157,10 +155,10 @@ where
         &mut self,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Result<(), Self::Error>> {
-        self.svc.poll_ready(cx).map_err(Into::into)
+        self.inner.poll_ready(cx).map_err(Into::into)
     }
 
-    fn call(&mut self, req: Request<ReqB>) -> Self::Future {
+    fn call(&mut self, req: Request<B>) -> Self::Future {
         let addr = req
             .extensions()
             .get::<SocketAddr>()
@@ -168,7 +166,7 @@ where
 
         if self.has_token(*addr) {
             RateLimitFuture::Service {
-                fut: self.svc.call(req),
+                fut: self.inner.call(req),
             }
         } else {
             RateLimitFuture::RateLimited

@@ -2,6 +2,7 @@ use std::mem::MaybeUninit;
 
 use anyhow::anyhow;
 
+/// a non-growable ring buffer
 #[derive(Debug)]
 pub struct Queue<T> {
     data: Vec<MaybeUninit<T>>,
@@ -13,7 +14,14 @@ pub struct Queue<T> {
     tail: usize,
 }
 
+impl<T> Default for Queue<T> {
+    fn default() -> Self {
+        Queue::new(256)
+    }
+}
+
 impl<T> Queue<T> {
+    /// panics if cap > u16::MAX
     pub fn new(cap: usize) -> Self {
         assert!(
             cap <= u16::MAX as usize,

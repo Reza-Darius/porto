@@ -176,21 +176,20 @@ pub struct PeerAddr {
 
 impl PeerAddr {
     /// converts the peeraddr to an URI with the peer addr as the authority/host
-    pub fn to_uri<P>(&self, path: P) -> Result<Uri, anyhow::Error>
+    pub fn to_uri<P>(&self, path: P) -> Result<Uri, P::Error>
     where
         P: TryInto<PathAndQuery>,
-        P::Error: Into<anyhow::Error>,
     {
         let uri = match &**self {
             PeerAddrInner::Uds(socket_addr) => {
-                UdsUri::new(socket_addr, path.try_into().map_err(Into::into)?.as_str()).into()
+                UdsUri::new(socket_addr, path.try_into()?.as_str()).into()
             }
             PeerAddrInner::Ipv4(addr) => {
                 let authority: Authority = Authority::from_str(&addr.to_string()).unwrap();
                 Uri::builder()
                     .scheme("http")
                     .authority(authority)
-                    .path_and_query(path.try_into().map_err(Into::into)?)
+                    .path_and_query(path.try_into()?)
                     .build()
                     .unwrap()
             }

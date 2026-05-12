@@ -36,13 +36,13 @@ By default, porto looks for a `porto.toml` in the current working directory. An 
 # address for porto to listen on
 bind = "127.0.0.1:3000"
 
-# TLS is enabled by default
+[tls]
 tls = true
 
-# enables ACME
+# enables ACME for automatic certificates, make sure porto is allowed to bind to port 80
 auto_cert = false
 
-# if TLS is enabled, you need to provide paths for certificates
+# if TLS is enabled, and ACME disabled, you need to provide paths for certificates
 cert_path = "credentials/testpeer.com.pem"
 key_path = "credentials/testpeer.com-key.pem"
 

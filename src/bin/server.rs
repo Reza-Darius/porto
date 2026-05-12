@@ -7,7 +7,6 @@ use hyper_util::rt::TokioExecutor;
 use hyper_util::server::conn::auto::Builder;
 use hyper_util::server::graceful::Watcher;
 use hyper_util::{rt::TokioIo, service::TowerToHyperService};
-use porto::services::{HealthServiceConfig, setup_health_service};
 use std::time::Instant;
 use tap::Pipe;
 use tikv_jemallocator::Jemalloc;
@@ -31,11 +30,8 @@ async fn main() -> Result<()> {
 
     let config = setup_config()?;
     let listener = setup_listener(&config);
-    let tls_acceptor = setup_tls_from_file(config.tls.as_ref().unwrap())?;
-    let peers = PeerTable::init(&config);
-
-    let service = setup_service4(&config, peers.clone());
-    setup_health_service(HealthServiceConfig::default(), peers);
+    let tls_acceptor = setup_tls_from_file(&config.tls)?;
+    let service = setup_service4(&config);
 
     let graceful = hyper_util::server::graceful::GracefulShutdown::new();
     let mut signal = std::pin::pin!(shutdown_signal());

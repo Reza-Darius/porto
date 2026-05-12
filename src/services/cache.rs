@@ -34,7 +34,6 @@ where
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Result<(), Self::Error>> {
         self.inner.poll_ready(cx).map_err(Into::into)
-        // .map_err(|e| anyhow::Error::from_boxed(e.into()))
     }
     #[allow(clippy::needless_return)]
     fn call(&mut self, req: Request<B>) -> Self::Future {
@@ -121,6 +120,7 @@ where
                         return Ok(resp);
                     }
                 };
+            // no cache entry
             } else {
                 let Ok(mut resp) = svc
                     .call(Request::from_parts(req_parts.clone(), req_body))

@@ -3,18 +3,22 @@ use std::{any::Any, time::Duration};
 use http::Response;
 use http_body_util::BodyExt;
 use hyper::StatusCode;
-use tower::{ServiceBuilder, ServiceExt};
+use tower::{ServiceBuilder, ServiceExt, layer::layer_fn, util::option_layer};
 use tower_http::{
-    catch_panic::CatchPanicLayer, compression::CompressionLayer, limit::RequestBodyLimitLayer,
-    timeout::TimeoutLayer, trace::TraceLayer,
+    catch_panic::CatchPanicLayer,
+    compression::{Compression, CompressionLayer},
+    timeout::TimeoutLayer,
+    trace::TraceLayer,
 };
 
 use crate::{
     config::PortoConfig,
     services::{
+        HealthServiceConfig,
         addr::AddrServiceLayer,
         cache::ResponseCacheLayer,
         ratelimit::RateLimitLayer,
+        setup_health_service,
         upstream::{
             connection_table::{ConnectionConfig, ConnectionService},
             hyper_client,
@@ -43,7 +47,22 @@ pub fn setup_service(config: &PortoConfig) -> HyperService {
         .boxed_clone()
 }
 
-pub fn setup_service4(config: &PortoConfig, peers: PeerTable) -> HyperService {
+pub fn setup_service4(config: &PortoConfig) -> HyperService {
+    let peers = PeerTable::init(config);
+
+    if config.service.health {
+        setup_health_service(HealthServiceConfig::default(), peers.clone());
+    } else {
+        // TODO: account for missing health service in peer table
+    }
+
+    // compression changes the response body
+    let comp = layer_fn(|svc| {
+        Compression::new(svc)
+            .gzip(true)
+            .map_response(|resp| resp.map(|b| b.boxed_unsync()))
+    });
+
     ServiceBuilder::new()
         .layer(TraceLayer::new_for_http())
         .layer(TimeoutLayer::with_status_code(
@@ -51,10 +70,12 @@ pub fn setup_service4(config: &PortoConfig, peers: PeerTable) -> HyperService {
             Duration::from_secs(20),
         ))
         .layer(CatchPanicLayer::custom(handle_panic))
-        .layer(CompressionLayer::new().gzip(true))
-        .layer(RateLimitLayer::new())
+        .layer(option_layer(config.service.limit.then(RateLimitLayer::new)))
+        .layer(option_layer(config.service.comp.then_some(comp)))
         .layer(AddrServiceLayer::new(peers))
-        .layer(ResponseCacheLayer::new(1024))
+        .layer(option_layer(
+            config.service.cache.then(|| ResponseCacheLayer::new(1024)),
+        ))
         .service(ConnectionService::new(ConnectionConfig::default()))
         // using a BoxError breaks the whole thing and i cant figure out why
         .map_err(anyhow::Error::from_boxed)

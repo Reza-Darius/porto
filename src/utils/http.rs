@@ -161,5 +161,5 @@ pub fn uri_absolute(parts: &http::request::Parts, peer_addr: &PeerAddr) -> anyho
         .cloned()
         .ok_or_else(|| anyhow::anyhow!("no path found on request"))?;
 
-    peer_addr.to_uri(path)
+    peer_addr.to_uri(path).map_err(Into::into)
 }

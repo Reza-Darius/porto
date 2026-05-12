@@ -1,4 +1,4 @@
-use std::ops::Deref;
+use std::{ops::Deref, time::Duration};
 
 use anyhow::Result;
 use axum::{
@@ -32,6 +32,7 @@ async fn main() -> Result<()> {
         .route("/cache", get(cache))
         .route("/health", get(health))
         .route("/comp", get(comp))
+        .route("/timeout", get(timeout))
         .layer(middleware::from_fn(log_handle));
 
     let mut set: JoinSet<Result<(), anyhow::Error>> = JoinSet::new();
@@ -115,6 +116,14 @@ async fn cache() -> Response {
     Response::builder()
         .status(StatusCode::OK)
         .header(CACHE_CONTROL, "max-age=60")
+        .body(Body::empty())
+        .expect("the value are hard coded")
+}
+
+async fn timeout() -> Response {
+    tokio::time::sleep(Duration::from_secs(10));
+    Response::builder()
+        .status(StatusCode::OK)
         .body(Body::empty())
         .expect("the value are hard coded")
 }

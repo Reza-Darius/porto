@@ -250,7 +250,7 @@ fn new_http2_client(addr: PeerAddr, pool: &ConnectionService) -> HttpClient {
     http2.boxed_clone()
 }
 
-fn new_client() -> HttpClient {
+fn new_client(config: &ConnectionConfig) -> HttpClient {
     let http1 = ServiceBuilder::new()
         .layer(layer_fn(|inner| {
             cache::builder().executor(TokioExecutor::new()).build(inner)
@@ -290,23 +290,27 @@ fn new_client() -> HttpClient {
     let map = Arc::new(Mutex::new(map));
     let worker_clone = map.clone();
 
-    // // background worker to time out idle connections
-    // tokio::spawn(async move {
-    //     let mut timeout_check = tokio::time::interval(to_interval);
+    let to_interval = config.to_check_int;
+    let to_dur = config.idle_timeout;
 
-    //     // the first tick completes instantly
-    //     timeout_check.tick().await;
-    //     loop {
-    //         timeout_check.tick().await;
-    //         let now = Instant::now();
-    //         worker_clone.lock().retain(|peer, svc| {
-    //             if peer.sender.is_closed() {
-    //                 return false;
-    //             }
-    //             now < peer.last_used + to_dur
-    //         });
-    //     }
-    // });
+    // background worker to time out idle connections
+    tokio::spawn(async move {
+        let mut timeout_check = tokio::time::interval(to_interval);
+
+        // the first tick completes instantly
+        timeout_check.tick().await;
+        loop {
+            timeout_check.tick().await;
+            let now = Instant::now();
+            worker_clone.lock().retain(|peer, svc| {
+                // if peer.sender.is_closed() {
+                //     return false;
+                // }
+                // now < peer.last_used + to_dur
+                true
+            });
+        }
+    });
 
     let svc = service_fn(move |req: Request<Incoming>| {
         let map = map.clone();

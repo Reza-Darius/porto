@@ -27,7 +27,10 @@ pub struct Cli {
 #[derive(Debug, Deserialize, Default)]
 pub struct PortoConfig {
     pub bind: Option<SocketAddr>,
-    pub tls: Option<TlsConfig>,
+    #[serde(default)]
+    pub tls: TlsConfig,
+    #[serde(default)]
+    pub service: ServiceConfig,
     proxy: Vec<ProxyConfig>,
 }
 
@@ -62,11 +65,10 @@ impl From<ProxyConfig> for Peer {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct TlsConfig {
     #[serde(rename(deserialize = "tls"))]
     pub enabled: bool,
-    #[serde(default)]
     pub auto_cert: bool,
     // for simple TLS
     pub cert_path: Option<PathBuf>,
@@ -94,15 +96,37 @@ impl TlsConfig {
     }
 }
 
-const fn default_tls() -> bool {
-    true
+impl Default for TlsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            auto_cert: false,
+            cert_path: None,
+            key_path: None,
+            credentials: None,
+            debug: false,
+        }
+    }
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
 pub struct ServiceConfig {
-    lb: bool,
-    health: bool,
-    limit: bool,
+    pub health: bool,
+    pub limit: bool,
+    pub comp: bool,
+    pub cache: bool,
+}
+
+impl Default for ServiceConfig {
+    fn default() -> Self {
+        ServiceConfig {
+            health: true,
+            limit: true,
+            comp: true,
+            cache: true,
+        }
+    }
 }
 
 #[instrument(err)]
@@ -135,9 +159,7 @@ fn parse_config_file(path: impl AsRef<Path>) -> Result<PortoConfig> {
         .with_context(|| anyhow!("path: {}", path.as_ref().display()))?
         .pipe_as_ref(toml::from_slice)?;
 
-    if let Some(tls) = &mut config.tls {
-        tls.validate()?;
-    }
+    config.tls.validate()?;
 
     if config.proxy.is_empty() {
         return Err(anyhow!(
@@ -182,8 +204,8 @@ mod config_tests {
 
         let config = parse_config_file("testporto.toml").unwrap();
 
-        assert!(config.tls.is_some());
-        assert!(!config.tls.as_ref().unwrap().auto_cert);
+        assert!(config.tls.enabled);
+        assert!(!config.tls.auto_cert);
         assert_eq!(config.proxy.len(), 2);
         println!("{:?}", config);
 

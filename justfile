@@ -1,5 +1,9 @@
 server_addr := "127.0.0.1:4000"
 
+cap:
+    sudo setcap 'cap_net_bind_service=+ep' ./target/server
+    sudo setcap 'cap_net_bind_service=+ep' ./debug/server
+
 sr:
     cargo run --release --bin server -- {{ server_addr }}
 
