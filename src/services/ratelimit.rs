@@ -165,7 +165,7 @@ where
             .expect("we require every request to have it");
 
         if self.has_token(*addr) {
-            RateLimitFuture::Service {
+            RateLimitFuture::Ok {
                 fut: self.inner.call(req),
             }
         } else {
@@ -177,7 +177,7 @@ where
 pin_project! {
     #[project = EnumProj]
     pub enum RateLimitFuture<F> {
-        Service {#[pin] fut: F},
+        Ok {#[pin] fut: F},
         RateLimited,
     }
 }
@@ -195,7 +195,7 @@ where
     ) -> std::task::Poll<Self::Output> {
         let this = self.project();
         match this {
-            EnumProj::Service { fut } => fut.poll(cx).map_err(Into::into),
+            EnumProj::Ok { fut } => fut.poll(cx).map_err(Into::into),
             EnumProj::RateLimited => Poll::Ready(Ok(response(StatusCode::TOO_MANY_REQUESTS))),
         }
     }

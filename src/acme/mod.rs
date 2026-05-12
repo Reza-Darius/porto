@@ -264,7 +264,7 @@ mod tests {
 
         let addr = "0.0.0.0:5002"; // port for pebble ACME server
 
-        let domains = PeerTable::try_from(&[("acmetest.com", "1.1.1.1:6767")])?;
+        let domains = PeerTable::init_debug(&[("acmetest.com", "1.1.1.1:6767")])?;
 
         let listener = tokio::net::TcpListener::bind(addr).await?;
         let tls = PortoTLS::init(&tls_config, domains).await.unwrap();

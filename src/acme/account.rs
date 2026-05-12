@@ -33,7 +33,7 @@ async fn read_from_file(path: &Path) -> Result<Account> {
     if path.exists() {
         debug!("reading ACME acc from file");
 
-        let file = tokio::fs::read(&path).await?;
+        let file = std::fs::read(path)?;
 
         let (creds, _) = bincode::serde::decode_from_slice::<AccountCredentials, Configuration>(
             &file,
@@ -65,7 +65,7 @@ async fn create_new_acc(path: &Path) -> Result<Account> {
 
     let data =
         bincode::serde::encode_to_vec::<AccountCredentials, Configuration>(creds, BINCODE_CONFIG)?;
-    tokio::fs::write(path, data).await?;
+    std::fs::write(path, data)?;
 
     Ok(account)
 }

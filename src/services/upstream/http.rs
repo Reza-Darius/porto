@@ -16,7 +16,7 @@ use tracing::{debug, error};
 use super::connector::Upstream;
 use crate::utils::*;
 
-// this could be a larger int but eh, i dont care that much
+// this could be a larger int but eh
 static CON_ID: AtomicU16 = AtomicU16::new(0);
 
 /// thin service wrapper over a sender
@@ -64,7 +64,7 @@ where
 /// a service to establish a connection to a backend via UDS or TCP
 #[derive(Debug)]
 pub struct Http1Connect<S> {
-    /// number of active connections
+    /// number of active connections, for debug purposes mainly
     n_connections: Arc<AtomicU16>,
     semaphore: PollSemaphore,
     permit: Option<OwnedSemaphorePermit>,
@@ -119,7 +119,7 @@ where
     }
 
     fn call(&mut self, addr: PeerAddr) -> Self::Future {
-        // we take a permit and pack it into the sender
+        // we take a permit and pack it with the sender
         let permit = self
             .permit
             .take()
@@ -212,6 +212,8 @@ where
 }
 
 /// a service to establish a connection to a backend via UDS or TCP
+///
+/// for HTTP2 we can ommit the semaphore because we  multiplex over a single connection
 #[derive(Debug, Clone)]
 pub struct Http2Connect<S> {
     /// number of active connections

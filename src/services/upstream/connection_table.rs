@@ -23,7 +23,7 @@ use super::{
     connector::UpstreamConnector,
     http::{Http1Connect, Http2Connect},
 };
-use crate::utils::{Body, BoxFut, Peer, PeerAddr, PeerProto, response};
+use crate::utils::{Body, BoxFut, Peer, PeerAddr, PeerProto, boxfut_err, response};
 
 #[derive(Clone)]
 pub struct ConnectionService {
@@ -76,9 +76,7 @@ impl Service<Request<Incoming>> for ConnectionService {
 
     fn call(&mut self, req: Request<Incoming>) -> Self::Future {
         let Some(peer) = req.extensions().get::<Peer>().cloned() else {
-            return Box::pin(async {
-                Err(anyhow!("Connection Service Error: no PeerAddr found on request").into())
-            });
+            return boxfut_err("no peer address found on request");
         };
         let prot = peer.prot;
         let mut svc = match self.table.lock().entry(peer.addr) {
@@ -115,15 +113,16 @@ fn new_http1_client(addr: PeerAddr, pool: &ConnectionService) -> HttpClient {
     let to_interval = pool.config.to_check_int;
     let to_dur = pool.config.idle_timeout;
 
-    let http1con = ServiceBuilder::new()
+    // we use a cache to dynamically open new connections in a pool
+    let http1 = ServiceBuilder::new()
+        .layer_fn(|svc| {
+            hyper_util::client::pool::cache::builder()
+                .executor(hyper_util::rt::TokioExecutor::new())
+                .build(svc)
+        })
         .concurrency_limit(pool.config.max_http1_in_flight as usize) // limits the amount of in-flight handshakes
         .layer_fn(|con| Http1Connect::new(pool.config.max_http1_con as usize, con))
         .service(UpstreamConnector::new());
-
-    // we use a cache to dynamically open new connections in a pool
-    let http1 = hyper_util::client::pool::cache::builder()
-        .executor(hyper_util::rt::TokioExecutor::new())
-        .build(http1con);
 
     let mut worker_clone = http1.clone();
 
@@ -187,12 +186,11 @@ fn new_http2_client(addr: PeerAddr, pool: &ConnectionService) -> HttpClient {
     let to_interval = pool.config.to_check_int;
     let to_dur = pool.config.idle_timeout;
 
+    // we use a singleton to multiplex HTTP2 over a single connection
     let http2 = ServiceBuilder::new()
+        .layer_fn(Singleton::new)
         .layer_fn(Http2Connect::new)
         .service(UpstreamConnector::new());
-
-    // we use a singleton to multiplex HTTP2 over a single connection
-    let http2 = Singleton::new(http2);
 
     let mut worker_clone = http2.clone();
 
@@ -250,6 +248,7 @@ fn new_http2_client(addr: PeerAddr, pool: &ConnectionService) -> HttpClient {
     http2.boxed_clone()
 }
 
+// WIP
 fn new_client(config: &ConnectionConfig) -> HttpClient {
     let http1 = ServiceBuilder::new()
         .layer(layer_fn(|inner| {

@@ -1,6 +1,5 @@
-use std::{any::Any, time::Duration};
+use std::time::Duration;
 
-use http::Response;
 use http_body_util::BodyExt;
 use hyper::StatusCode;
 use tower::{ServiceBuilder, ServiceExt, layer::layer_fn, util::option_layer};
@@ -24,7 +23,7 @@ use crate::{
             hyper_client,
         },
     },
-    utils::{Body, HyperService, PeerTable, internal_error},
+    utils::{HyperService, PeerTable, handle_panic},
 };
 
 pub fn setup_service(config: &PortoConfig) -> HyperService {
@@ -81,17 +80,4 @@ pub fn setup_service4(config: &PortoConfig) -> HyperService {
         .map_err(anyhow::Error::from_boxed)
         .map_response(|resp: http::Response<_>| resp.map(|body| body.boxed_unsync()))
         .boxed_clone()
-}
-
-fn handle_panic(err: Box<dyn Any + Send + 'static>) -> Response<Body> {
-    let details = if let Some(s) = err.downcast_ref::<String>() {
-        s.clone()
-    } else if let Some(s) = err.downcast_ref::<&str>() {
-        s.to_string()
-    } else {
-        "Unknown panic message".to_string()
-    };
-    tracing::error!(details);
-
-    internal_error()
 }

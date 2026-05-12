@@ -121,7 +121,7 @@ async fn cache() -> Response {
 }
 
 async fn timeout() -> Response {
-    tokio::time::sleep(Duration::from_secs(10));
+    tokio::time::sleep(Duration::from_secs(10)).await;
     Response::builder()
         .status(StatusCode::OK)
         .body(Body::empty())

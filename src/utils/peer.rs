@@ -4,7 +4,6 @@ use std::collections::HashMap;
 use std::fmt::Display;
 use std::ops::Deref;
 use std::path::PathBuf;
-use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
@@ -14,21 +13,12 @@ use anyhow::{Context, Result, anyhow};
 use derive_more::{Display, Eq};
 use http::uri::{Authority, PathAndQuery};
 use http::{Uri, Version};
-use http_body_util::combinators::UnsyncBoxBody;
-use hyper::body::{Bytes, Incoming};
-use hyper::{Request, Response};
 use hyperlocal::Uri as UdsUri;
 use parking_lot::{Mutex, RwLock};
 use serde::Deserialize;
-use tower::BoxError;
-use tower::util::BoxCloneService;
 use tracing::debug;
 
 use crate::config::PortoConfig;
-
-pub type BoxFut<R, E> = Pin<Box<dyn Future<Output = std::result::Result<R, E>> + Send>>;
-pub type Body = UnsyncBoxBody<Bytes, BoxError>;
-pub type HyperService = BoxCloneService<Request<Incoming>, Response<Body>, anyhow::Error>;
 
 /// monotonic counter for peer ids
 static ID_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -70,7 +60,20 @@ impl PeerTable {
         table
     }
 
-    /// register alive peer and in domain table
+    // initializes a proxy table under the assumption they are reachable
+    pub fn init_debug<const N: usize>(value: &[(&str, &str); N]) -> Result<Self> {
+        let table = PeerTable::new();
+
+        for (domain, addr) in value.iter() {
+            let domain = Domain::parse(domain)?;
+            let upstream = PeerAddr::try_from(*addr)?;
+            let p = Peer::new(domain, upstream, PeerProto::Http1);
+            table.register_peer(p);
+        }
+        Ok(table)
+    }
+
+    /// the caller has to ensure the peer is reachable
     pub fn register_peer(&self, peer: Peer) {
         debug!(id = %peer.id, addr = %peer.addr, "registering peer");
 
@@ -107,22 +110,6 @@ impl PeerTable {
     pub fn get_reg_peers(&self) -> impl Iterator<Item = Peer> {
         let mut guard = self.inner.registered_peers.lock();
         std::mem::take(&mut *guard).into_iter()
-    }
-}
-
-impl<const N: usize> TryFrom<&[(&str, &str); N]> for PeerTable {
-    type Error = anyhow::Error;
-
-    fn try_from(value: &[(&str, &str); N]) -> std::result::Result<Self, Self::Error> {
-        let table = PeerTable::new();
-
-        for (domain, addr) in value.iter() {
-            let domain = Domain::parse(domain)?;
-            let upstream = PeerAddr::try_from(*addr)?;
-            let p = Peer::new(domain, upstream, PeerProto::Http1);
-            table.register_peer(p);
-        }
-        Ok(table)
     }
 }
 
