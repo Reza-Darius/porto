@@ -1,6 +1,5 @@
 #![allow(dead_code)]
 use std::{
-    net::SocketAddr,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -14,9 +13,7 @@ use thiserror::Error;
 use tower::{BoxError, Layer, Service};
 use tracing::warn;
 
-use crate::utils::{Body, response};
-
-const BODY_SIZE_LIMIT: u32 = (1 << 20) * 1; // 1 MB
+const BODY_SIZE_LIMIT: u32 = 1 << 20; // 1 MB
 const HEADER_SIZE_LIMIT: u32 = (1 << 10) * 8; // 8 Kb
 
 /// an IP based rate limiter using token buckets
@@ -144,7 +141,7 @@ pin_project! {
 impl<B> ResponseBody<B> {
     fn with_msg(str: &str) -> Self {
         Self {
-            inner: ResponseBodyInner::Err {
+            inner: ResponseBodyInner::Custom {
                 body: Full::from(str.to_string()),
             },
         }
@@ -159,7 +156,7 @@ impl<B> ResponseBody<B> {
 pin_project! {
     #[project = BodyProj]
     enum ResponseBodyInner<B> {
-        Err {
+        Custom {
             #[pin]
             body: Full<Bytes>,
         },
@@ -182,21 +179,21 @@ where
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
         match self.project().inner.project() {
-            BodyProj::Err { body } => body.poll_frame(cx).map_err(|err| match err {}),
+            BodyProj::Custom { body } => body.poll_frame(cx).map_err(|err| match err {}),
             BodyProj::Body { body } => body.poll_frame(cx),
         }
     }
 
     fn is_end_stream(&self) -> bool {
         match &self.inner {
-            ResponseBodyInner::Err { body } => body.is_end_stream(),
+            ResponseBodyInner::Custom { body } => body.is_end_stream(),
             ResponseBodyInner::Body { body } => body.is_end_stream(),
         }
     }
 
     fn size_hint(&self) -> SizeHint {
         match &self.inner {
-            ResponseBodyInner::Err { body } => body.size_hint(),
+            ResponseBodyInner::Custom { body } => body.size_hint(),
             ResponseBodyInner::Body { body } => body.size_hint(),
         }
     }

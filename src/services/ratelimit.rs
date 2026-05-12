@@ -2,20 +2,20 @@
 use std::{
     collections::{HashMap, hash_map::Entry},
     net::{IpAddr, SocketAddr},
+    pin::Pin,
     sync::Arc,
-    task::Poll,
+    task::{Context, Poll},
     time::{Duration, Instant},
 };
 
 use axum::body::Bytes;
 use http::{Request, Response, StatusCode};
 use http_body_util::Full;
+use hyper::body::{Frame, SizeHint};
 use parking_lot::Mutex;
 use pin_project_lite::pin_project;
 use tower::{BoxError, Layer, Service};
 use tracing::{debug, warn};
-
-use crate::utils::{Body, response};
 
 const BUCKET_SIZE: u16 = 10;
 const REFILL_INTERVAL: Duration = Duration::from_mins(1);
@@ -68,6 +68,10 @@ pub struct RateLimiter<S> {
     inner: S,
 }
 
+struct RateLimiterInner {
+    map: Mutex<HashMap<IpAddr, Bucket>>,
+}
+
 impl<S> RateLimiter<S> {
     pub fn has_token(&self, addr: SocketAddr) -> bool {
         let addr = addr.ip();
@@ -93,10 +97,6 @@ impl<S> RateLimiter<S> {
             }
         }
     }
-}
-
-struct RateLimiterInner {
-    map: Mutex<HashMap<IpAddr, Bucket>>,
 }
 
 impl RateLimiterInner {
@@ -150,7 +150,7 @@ where
     S::Error: Into<BoxError>,
     ResB: hyper::body::Body,
 {
-    type Response = S::Response;
+    type Response = Response<RLBody<ResB>>;
     type Error = BoxError;
     type Future = RateLimitFuture<S::Future>;
 
@@ -172,6 +172,7 @@ where
                 fut: self.inner.call(req),
             }
         } else {
+            warn!(%addr, "rate limited");
             RateLimitFuture::RateLimited
         }
     }
@@ -185,13 +186,13 @@ pin_project! {
     }
 }
 
-impl<F, E, B> Future for RateLimitFuture<F>
+impl<F, E, ResB> Future for RateLimitFuture<F>
 where
-    F: Future<Output = Result<Response<B>, E>>,
+    F: Future<Output = Result<Response<ResB>, E>>,
     E: Into<BoxError>,
-    B: hyper::body::Body,
+    ResB: hyper::body::Body,
 {
-    type Output = Result<Response<B>, BoxError>;
+    type Output = Result<Response<RLBody<ResB>>, BoxError>;
 
     fn poll(
         self: std::pin::Pin<&mut Self>,
@@ -199,49 +200,82 @@ where
     ) -> std::task::Poll<Self::Output> {
         let this = self.project();
         match this {
-            EnumProj::Ok { fut } => fut.poll(cx).map_err(Into::into),
-            EnumProj::RateLimited => {
-                // let mut res = Response::new(B::default());
-                // *res.status_mut() = StatusCode::TOO_MANY_REQUESTS;
-                // Poll::Ready(Ok(res))
-                todo!()
-            }
+            EnumProj::Ok { fut } => fut
+                .poll(cx)
+                .map_err(Into::into)
+                .map(|f| f.map(|resp| resp.map(RLBody::new))),
+            EnumProj::RateLimited => Poll::Ready(Ok(Response::builder()
+                .status(StatusCode::TOO_MANY_REQUESTS)
+                .body(RLBody::with_msg("too many requests"))
+                .unwrap())),
         }
     }
 }
 
-// pin_project! {
-//     pub struct ResponseBody<B> {
-//         #[pin]
-//         inner: ResponseBodyInner<B>
-//     }
-// }
+pin_project! {
+    pub struct RLBody<B> {
+        #[pin]
+        inner: RLBodyInner<B>
+    }
+}
 
-// impl<B> ResponseBody<B> {
-//     fn payload_too_large() -> Self {
-//         Self {
-//             inner: ResponseBodyInner::PayloadTooLarge {
-//                 body: Full::from(BODY),
-//             },
-//         }
-//     }
-//     pub(crate) fn new(body: B) -> Self {
-//         Self {
-//             inner: ResponseBodyInner::Body { body },
-//         }
-//     }
-// }
+impl<B> RLBody<B> {
+    fn with_msg(str: &str) -> Self {
+        Self {
+            inner: RLBodyInner::Custom {
+                body: Full::from(str.to_string()),
+            },
+        }
+    }
+    pub(crate) fn new(body: B) -> Self {
+        Self {
+            inner: RLBodyInner::Body { body },
+        }
+    }
+}
 
-// pin_project! {
-//     #[project = BodyProj]
-//     enum ResponseBodyInner<B> {
-//         PayloadTooLarge {
-//             #[pin]
-//             body: Full<Bytes>,
-//         },
-//         Body {
-//             #[pin]
-//             body: B
-//         }
-//     }
-// }
+pin_project! {
+    #[project = BodyProj]
+    enum RLBodyInner<B> {
+        Custom {
+            #[pin]
+            body: Full<Bytes>,
+        },
+        Body {
+            #[pin]
+            body: B
+        }
+    }
+}
+
+impl<B> hyper::body::Body for RLBody<B>
+where
+    B: hyper::body::Body<Data = Bytes>,
+{
+    type Data = Bytes;
+    type Error = B::Error;
+
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+        match self.project().inner.project() {
+            BodyProj::Custom { body } => body.poll_frame(cx).map_err(|err| match err {}),
+            BodyProj::Body { body } => body.poll_frame(cx),
+        }
+    }
+
+    fn is_end_stream(&self) -> bool {
+        match &self.inner {
+            RLBodyInner::Custom { body } => body.is_end_stream(),
+            RLBodyInner::Body { body } => body.is_end_stream(),
+        }
+    }
+
+    fn size_hint(&self) -> SizeHint {
+        match &self.inner {
+            RLBodyInner::Custom { body } => body.size_hint(),
+            RLBodyInner::Body { body } => body.size_hint(),
+        }
+    }
+}

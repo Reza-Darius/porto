@@ -64,7 +64,8 @@ pub fn setup_service4(config: &PortoConfig) -> HyperService {
             Duration::from_secs(20),
         ))
         .layer(CatchPanicLayer::custom(handle_panic))
-        .layer(option_layer(config.service.limit.then(RateLimitLayer::new)))
+        // .layer(option_layer(config.service.limit.then(RateLimitLayer::new)))
+        .layer(RateLimitLayer::new())
         .layer(ReqValidationLayer::new())
         .layer(RequestBodyLimitLayer::new(1024))
         .layer_fn(|svc| Compression::new(svc).gzip(true))
