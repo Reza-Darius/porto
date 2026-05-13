@@ -1,13 +1,7 @@
 #![allow(dead_code)]
-use std::{
-    pin::Pin,
-    task::{Context, Poll},
-};
+use std::task::Poll;
 
-use axum::body::Bytes;
 use http::{Request, Response, StatusCode};
-use http_body_util::Full;
-use hyper::body::{Frame, SizeHint};
 use pin_project_lite::pin_project;
 use thiserror::Error;
 use tower::{BoxError, Layer, Service};
@@ -59,6 +53,18 @@ where
     }
 
     fn call(&mut self, req: Request<ReqB>) -> Self::Future {
+        let header_len: u32 = req
+            .headers()
+            .iter()
+            .map(|(header, value)| header.as_str().len() as u32 + value.as_bytes().len() as u32)
+            .sum();
+
+        if header_len > HEADER_SIZE_LIMIT {
+            return ReqValidationFuture::Err {
+                e: ReqValidationError::HeaderSizeExceeded,
+            };
+        }
+
         ReqValidationFuture::Ok {
             fut: self.inner.call(req),
         }
@@ -99,7 +105,7 @@ where
             EnumProj::Ok { fut } => fut
                 .poll(cx)
                 .map_err(Into::into)
-                .map(|f| f.map(|resp| resp.map(ResponseBody::new))),
+                .map(|f| f.map(|resp| resp.map(ResponseBody::wrap))),
             EnumProj::Err { e } => {
                 let status = match e {
                     ReqValidationError::HeaderSizeExceeded => {
@@ -116,71 +122,3 @@ where
         }
     }
 }
-
-// pin_project! {
-//     pub struct ResponseBody<B> {
-//         #[pin]
-//         inner: ResponseBodyInner<B>
-//     }
-// }
-
-// impl<B> ResponseBody<B> {
-//     fn with_msg(str: &str) -> Self {
-//         Self {
-//             inner: ResponseBodyInner::Custom {
-//                 body: Full::from(str.to_string()),
-//             },
-//         }
-//     }
-//     pub(crate) fn new(body: B) -> Self {
-//         Self {
-//             inner: ResponseBodyInner::Body { body },
-//         }
-//     }
-// }
-
-// pin_project! {
-//     #[project = BodyProj]
-//     enum ResponseBodyInner<B> {
-//         Custom {
-//             #[pin]
-//             body: Full<Bytes>,
-//         },
-//         Body {
-//             #[pin]
-//             body: B
-//         }
-//     }
-// }
-
-// impl<B> hyper::body::Body for ResponseBody<B>
-// where
-//     B: hyper::body::Body<Data = Bytes>,
-// {
-//     type Data = Bytes;
-//     type Error = B::Error;
-
-//     fn poll_frame(
-//         self: Pin<&mut Self>,
-//         cx: &mut Context<'_>,
-//     ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
-//         match self.project().inner.project() {
-//             BodyProj::Custom { body } => body.poll_frame(cx).map_err(|err| match err {}),
-//             BodyProj::Body { body } => body.poll_frame(cx),
-//         }
-//     }
-
-//     fn is_end_stream(&self) -> bool {
-//         match &self.inner {
-//             ResponseBodyInner::Custom { body } => body.is_end_stream(),
-//             ResponseBodyInner::Body { body } => body.is_end_stream(),
-//         }
-//     }
-
-//     fn size_hint(&self) -> SizeHint {
-//         match &self.inner {
-//             ResponseBodyInner::Custom { body } => body.size_hint(),
-//             ResponseBodyInner::Body { body } => body.size_hint(),
-//         }
-//     }
-// }

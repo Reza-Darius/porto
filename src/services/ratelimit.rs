@@ -2,16 +2,12 @@
 use std::{
     collections::{HashMap, hash_map::Entry},
     net::{IpAddr, SocketAddr},
-    pin::Pin,
     sync::Arc,
-    task::{Context, Poll},
+    task::Poll,
     time::{Duration, Instant},
 };
 
-use axum::body::Bytes;
 use http::{Request, Response, StatusCode};
-use http_body_util::Full;
-use hyper::body::{Frame, SizeHint};
 use parking_lot::Mutex;
 use pin_project_lite::pin_project;
 use tower::{BoxError, Layer, Service};
@@ -205,7 +201,7 @@ where
             EnumProj::Ok { fut } => fut
                 .poll(cx)
                 .map_err(Into::into)
-                .map(|f| f.map(|resp| resp.map(ResponseBody::new))),
+                .map(|f| f.map(|resp| resp.map(ResponseBody::wrap))),
             EnumProj::RateLimited => Poll::Ready(Ok(Response::builder()
                 .status(StatusCode::TOO_MANY_REQUESTS)
                 .body(ResponseBody::with_msg("too many requests"))
@@ -213,71 +209,3 @@ where
         }
     }
 }
-
-// pin_project! {
-//     pub struct RLBody<B> {
-//         #[pin]
-//         inner: RLBodyInner<B>
-//     }
-// }
-
-// impl<B> RLBody<B> {
-//     fn with_msg(str: &str) -> Self {
-//         Self {
-//             inner: RLBodyInner::Custom {
-//                 body: Full::from(str.to_string()),
-//             },
-//         }
-//     }
-//     pub(crate) fn new(body: B) -> Self {
-//         Self {
-//             inner: RLBodyInner::Body { body },
-//         }
-//     }
-// }
-
-// pin_project! {
-//     #[project = BodyProj]
-//     enum RLBodyInner<B> {
-//         Custom {
-//             #[pin]
-//             body: Full<Bytes>,
-//         },
-//         Body {
-//             #[pin]
-//             body: B
-//         }
-//     }
-// }
-
-// impl<B> hyper::body::Body for RLBody<B>
-// where
-//     B: hyper::body::Body<Data = Bytes>,
-// {
-//     type Data = Bytes;
-//     type Error = B::Error;
-
-//     fn poll_frame(
-//         self: Pin<&mut Self>,
-//         cx: &mut Context<'_>,
-//     ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
-//         match self.project().inner.project() {
-//             BodyProj::Custom { body } => body.poll_frame(cx).map_err(|err| match err {}),
-//             BodyProj::Body { body } => body.poll_frame(cx),
-//         }
-//     }
-
-//     fn is_end_stream(&self) -> bool {
-//         match &self.inner {
-//             RLBodyInner::Custom { body } => body.is_end_stream(),
-//             RLBodyInner::Body { body } => body.is_end_stream(),
-//         }
-//     }
-
-//     fn size_hint(&self) -> SizeHint {
-//         match &self.inner {
-//             RLBodyInner::Custom { body } => body.size_hint(),
-//             RLBodyInner::Body { body } => body.size_hint(),
-//         }
-//     }
-// }

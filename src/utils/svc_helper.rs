@@ -6,7 +6,7 @@ use std::{
 
 use axum::body::Bytes;
 use http::{Response, StatusCode};
-use http_body_util::Full;
+use http_body_util::{Empty, Full};
 use hyper::body::{Frame, SizeHint};
 use pin_project_lite::pin_project;
 use tower::BoxError;
@@ -43,14 +43,14 @@ pub fn handle_panic(err: Box<dyn Any + Send + 'static>) -> Response<Body> {
     } else {
         "Unknown panic message".to_string()
     };
-    tracing::error!(details);
+    tracing::error!(details, "request caused a panic");
 
     internal_error()
 }
 
 /*
  * helper struct and function for service futures allowing to pass the nested
- * response or return a HTTP message without allocation
+ * response body or return a HTTP message without a boxed future
  */
 pin_project! {
     pub struct ResponseBody<B> {
@@ -67,7 +67,8 @@ impl<B> ResponseBody<B> {
             },
         }
     }
-    pub(crate) fn new(body: B) -> Self {
+
+    pub(crate) fn wrap(body: B) -> Self {
         Self {
             inner: ResponseBodyInner::Body { body },
         }

@@ -7,17 +7,12 @@ use std::{
 
 use anyhow::anyhow;
 use http::{Request, Response, StatusCode};
-use http_body_util::Limited;
-use hyper::body::Incoming;
 use hyper_util::{
     client::pool::{cache, map::Map, singleton::Singleton},
     rt::TokioExecutor,
 };
 use parking_lot::Mutex;
-use tower::{
-    BoxError, Service, ServiceBuilder, ServiceExt, layer::layer_fn, service_fn,
-    util::BoxCloneService,
-};
+use tower::{BoxError, Service, ServiceBuilder, ServiceExt, service_fn, util::BoxCloneService};
 use tracing::{debug, error};
 
 use super::{
