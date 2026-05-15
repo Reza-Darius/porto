@@ -38,18 +38,16 @@ pub struct ReqValidation<S> {
 impl<S, ReqB, ResB> Service<Request<ReqB>> for ReqValidation<S>
 where
     S: Service<Request<ReqB>, Response = Response<ResB>>,
-    S::Error: Into<BoxError>,
-    ResB: hyper::body::Body,
 {
     type Response = Response<ResponseBody<ResB>>;
-    type Error = BoxError;
+    type Error = S::Error;
     type Future = ReqValidationFuture<S::Future>;
 
     fn poll_ready(
         &mut self,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Result<(), Self::Error>> {
-        self.inner.poll_ready(cx).map_err(Into::into)
+        self.inner.poll_ready(cx)
     }
 
     fn call(&mut self, req: Request<ReqB>) -> Self::Future {
@@ -90,10 +88,8 @@ enum ReqValidationError {
 impl<F, E, ResB> Future for ReqValidationFuture<F>
 where
     F: Future<Output = Result<Response<ResB>, E>>,
-    E: Into<BoxError>,
-    ResB: hyper::body::Body,
 {
-    type Output = Result<Response<ResponseBody<ResB>>, BoxError>;
+    type Output = Result<Response<ResponseBody<ResB>>, E>;
 
     fn poll(
         self: std::pin::Pin<&mut Self>,
@@ -104,7 +100,6 @@ where
         match this {
             EnumProj::Ok { fut } => fut
                 .poll(cx)
-                .map_err(Into::into)
                 .map(|f| f.map(|resp| resp.map(ResponseBody::wrap))),
             EnumProj::Err { e } => {
                 let status = match e {
@@ -113,7 +108,9 @@ where
                     }
                     ReqValidationError::NoContentField => StatusCode::BAD_REQUEST,
                 };
+
                 warn!(resp = %status, "invalid request");
+
                 Poll::Ready(Ok(Response::builder()
                     .status(status)
                     .body(ResponseBody::with_msg("error"))

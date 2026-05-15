@@ -7,6 +7,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use anyhow::anyhow;
 use http::{Request, Response, StatusCode};
 use parking_lot::Mutex;
 use pin_project_lite::pin_project;
@@ -34,6 +35,7 @@ impl<S> Layer<S> for RateLimitLayer {
     fn layer(&self, inner: S) -> Self::Service {
         RateLimiter {
             rl: self.inner.clone(),
+            token: None,
             inner,
         }
     }
@@ -41,33 +43,31 @@ impl<S> Layer<S> for RateLimitLayer {
 
 impl RateLimitLayer {
     pub fn new() -> Self {
-        let rl = Arc::new(RateLimiterInner {
-            map: Mutex::new(HashMap::new()),
-        });
-
-        let rl_clone = rl.clone();
-
-        // background worker to clean up stale buckets
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(CLEANUP_INTERVAL);
-            loop {
-                interval.tick().await;
-                rl_clone.cleanup();
-            }
-        });
-
-        RateLimitLayer { inner: rl }
+        RateLimitLayer {
+            inner: RateLimiterInner::new(),
+        }
     }
 }
+
+// a simple marker type
+#[derive(Clone, Copy)]
+struct Token;
 
 #[derive(Clone)]
 pub struct RateLimiter<S> {
     rl: Arc<RateLimiterInner>,
+    token: Option<Token>,
     inner: S,
 }
 
-struct RateLimiterInner {
-    map: Mutex<HashMap<IpAddr, Bucket>>,
+impl<S> RateLimiter<S> {
+    pub fn new(inner: S) -> Self {
+        RateLimiter {
+            rl: RateLimiterInner::new(),
+            token: None,
+            inner,
+        }
+    }
 }
 
 impl<S> RateLimiter<S> {
@@ -97,7 +97,28 @@ impl<S> RateLimiter<S> {
     }
 }
 
+struct RateLimiterInner {
+    map: Mutex<HashMap<IpAddr, Bucket>>,
+}
+
 impl RateLimiterInner {
+    fn new() -> Arc<Self> {
+        let rl = Arc::new(RateLimiterInner {
+            map: Mutex::new(HashMap::new()),
+        });
+
+        let rl_clone = rl.clone();
+
+        // background worker to clean up stale buckets
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(CLEANUP_INTERVAL);
+            loop {
+                interval.tick().await;
+                rl_clone.cleanup();
+            }
+        });
+        rl
+    }
     fn cleanup(&self) {
         self.map
             .lock()
@@ -146,7 +167,6 @@ impl<S, ReqB, ResB> Service<Request<ReqB>> for RateLimiter<S>
 where
     S: Service<Request<ReqB>, Response = Response<ResB>>,
     S::Error: Into<BoxError>,
-    ResB: hyper::body::Body,
 {
     type Response = Response<ResponseBody<ResB>>;
     type Error = BoxError;
@@ -160,10 +180,9 @@ where
     }
 
     fn call(&mut self, req: Request<ReqB>) -> Self::Future {
-        let addr = req
-            .extensions()
-            .get::<SocketAddr>()
-            .expect("we require every request to have it");
+        let Some(addr) = req.extensions().get::<SocketAddr>() else {
+            return RateLimitFuture::NoAddrFoun;
+        };
 
         if self.has_token(*addr) {
             RateLimitFuture::Ok {
@@ -181,6 +200,7 @@ pin_project! {
     pub enum RateLimitFuture<F> {
         Ok {#[pin] fut: F},
         RateLimited,
+        NoAddrFoun,
     }
 }
 
@@ -188,7 +208,6 @@ impl<F, E, ResB> Future for RateLimitFuture<F>
 where
     F: Future<Output = Result<Response<ResB>, E>>,
     E: Into<BoxError>,
-    ResB: hyper::body::Body,
 {
     type Output = Result<Response<ResponseBody<ResB>>, BoxError>;
 
@@ -206,6 +225,7 @@ where
                 .status(StatusCode::TOO_MANY_REQUESTS)
                 .body(ResponseBody::with_msg("too many requests"))
                 .expect("the values are hard coded"))),
+            EnumProj::NoAddrFoun => Poll::Ready(Err("no addr found on request".into())),
         }
     }
 }

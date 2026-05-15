@@ -17,7 +17,7 @@ pub trait TraceErr<T, E> {
 
 impl<T, E> TraceErr<T, E> for Result<T, E>
 where
-    E: std::error::Error,
+    E: std::fmt::Display,
 {
     fn trace_err(self) -> Result<T, E> {
         match self {

@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::{collections::HashSet, path::Path};
 
 use anyhow::{Result, anyhow};
 use instant_acme::{
@@ -38,17 +38,18 @@ pub async fn issue_order(store: PortoTLS, domains: &[Domain]) -> Result<()> {
             AuthorizationStatus::Valid => continue,
             _ => todo!(),
         }
+
         let mut challenge = authz
             .challenge(ChallengeType::Http01)
             .ok_or_else(|| anyhow::anyhow!("no http01 challenge found"))?;
 
-        let token = AcmeToken::from_str(challenge.token.clone());
+        if challenge.token.is_empty() {
+            return Err(anyhow!("http01 challenge token is empty"));
+        }
 
-        store
-            .inner
-            .pending_challenges
-            .lock()
-            .insert(token.clone(), challenge.key_authorization());
+        let token = AcmeToken::from_string(challenge.token.clone());
+
+        store.register_challenge(token.clone(), challenge.key_authorization());
 
         // remembering the token for removal later
         tokens.insert(token);
@@ -68,32 +69,20 @@ pub async fn issue_order(store: PortoTLS, domains: &[Domain]) -> Result<()> {
     }
 
     // Finalize the order and print certificate chain, private key and account credentials.
-    let key = KeyPem::from_str(order.finalize().await?);
-    let cert = CertChainPem::from_str(order.poll_certificate(&RetryPolicy::default()).await?);
+    let key = KeyPem::from_string(order.finalize().await?);
+    let cert = CertChainPem::from_string(order.poll_certificate(&RetryPolicy::default()).await?);
 
     {
-        // remove from pending tokens
-        let mut guard = store.inner.pending_challenges.lock();
         for token in tokens.into_iter() {
-            guard.remove(&token);
+            store.remove_challenge(&token);
         }
     }
 
-    tokio::fs::write(
-        store.inner.cred_path.join(KEY_FILENAME),
-        key.as_str().as_bytes(),
-    )
-    .await?;
-
-    tokio::fs::write(
-        store.inner.cred_path.join(CERT_FILENAME),
-        cert.as_str().as_bytes(),
-    )
-    .await?;
+    write_order_to_disk(&store.inner.cred_path, &cert, &key)?;
 
     {
         // insert inside in memory cache
-        let mut guard = store.inner.certs.lock();
+        let mut guard = store.inner.store.lock();
 
         for domain in domains.into_iter() {
             store.add_to_resolver(&domain, cert.clone(), key.clone())?;
@@ -104,5 +93,11 @@ pub async fn issue_order(store: PortoTLS, domains: &[Domain]) -> Result<()> {
     info!("ACME order completed");
     debug!("\n{}\n{}", cert, key);
 
+    Ok(())
+}
+
+fn write_order_to_disk(path: impl AsRef<Path>, cert: &CertChainPem, key: &KeyPem) -> Result<()> {
+    std::fs::write(path.as_ref().join(CERT_FILENAME), cert.as_bytes())?;
+    std::fs::write(path.as_ref().join(KEY_FILENAME), key.as_bytes())?;
     Ok(())
 }

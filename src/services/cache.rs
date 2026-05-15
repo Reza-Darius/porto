@@ -27,7 +27,7 @@ where
 {
     type Response = S::Response;
     type Error = BoxError;
-    type Future = BoxFut<Self::Response, Self::Error>;
+    type Future = SvcBoxFut<Self::Response, Self::Error>;
 
     fn poll_ready(
         &mut self,

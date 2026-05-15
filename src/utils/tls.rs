@@ -25,12 +25,16 @@ const RENEWAL_THRESHHOLD: i64 = 60 * 60 * 24 * RENEWAL_THRESHOLD_DAYS;
 pub struct CertChainPem(String);
 
 impl CertChainPem {
-    pub fn from_str(str: impl Into<String>) -> Self {
+    pub fn from_string(str: impl Into<String>) -> Self {
         CertChainPem(str.into())
     }
 
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.as_bytes()
     }
 
     pub fn should_renew(&self) -> bool {
@@ -62,12 +66,16 @@ impl CertChainPem {
 pub struct KeyPem(String);
 
 impl KeyPem {
-    pub fn from_str(str: impl Into<String>) -> Self {
+    pub fn from_string(str: impl Into<String>) -> Self {
         KeyPem(str.into())
     }
 
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.as_bytes()
     }
 }
 
@@ -76,7 +84,7 @@ impl KeyPem {
 pub struct AcmeToken(String);
 
 impl AcmeToken {
-    pub fn from_str(str: impl Into<String>) -> Self {
+    pub fn from_string(str: impl Into<String>) -> Self {
         AcmeToken(str.into())
     }
 

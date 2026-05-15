@@ -43,7 +43,7 @@ where
 {
     type Response = Response<Body>;
     type Error = BoxError;
-    type Future = BoxFut<Self::Response, Self::Error>;
+    type Future = SvcBoxFut<Self::Response, Self::Error>;
 
     fn poll_ready(
         &mut self,
@@ -111,7 +111,7 @@ where
 {
     type Response = Http1Sender<B>;
     type Error = BoxError;
-    type Future = BoxFut<Self::Response, Self::Error>;
+    type Future = SvcBoxFut<Self::Response, Self::Error>;
 
     fn poll_ready(
         &mut self,
@@ -201,7 +201,7 @@ where
 {
     type Response = Response<Body>;
     type Error = BoxError;
-    type Future = BoxFut<Self::Response, Self::Error>;
+    type Future = SvcBoxFut<Self::Response, Self::Error>;
 
     fn poll_ready(
         &mut self,
@@ -265,7 +265,7 @@ where
 {
     type Response = Http2Sender<B>;
     type Error = BoxError;
-    type Future = BoxFut<Self::Response, Self::Error>;
+    type Future = SvcBoxFut<Self::Response, Self::Error>;
 
     fn poll_ready(
         &mut self,

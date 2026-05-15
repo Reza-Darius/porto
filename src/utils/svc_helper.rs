@@ -6,12 +6,23 @@ use std::{
 
 use axum::body::Bytes;
 use http::{Response, StatusCode};
-use http_body_util::{Empty, Full};
+use http_body_util::{BodyExt, Empty, Full};
 use hyper::body::{Frame, SizeHint};
 use pin_project_lite::pin_project;
 use tower::BoxError;
 
-use crate::utils::{Body, BoxFut, internal_error, response};
+use crate::utils::{internal_error, response};
+
+use http::Request;
+use http_body_util::combinators::UnsyncBoxBody;
+use hyper::body::Incoming;
+use tower::util::BoxCloneService;
+
+/// convenience type suitable for Futures returned by by Service impls
+pub type SvcBoxFut<R, E> =
+    Pin<Box<dyn Future<Output = std::result::Result<R, E>> + Send + 'static>>;
+pub type Body = UnsyncBoxBody<Bytes, BoxError>;
+pub type HyperService = BoxCloneService<Request<Incoming>, Response<Body>, anyhow::Error>;
 
 /*
 * Services are permitted to panic if call is invoked without obtaining Poll::Ready(Ok(())) from poll_ready.
@@ -25,12 +36,12 @@ pub fn svc_clone<S: Clone + Sized>(inner: &mut S) -> S {
     std::mem::replace(inner, clone)
 }
 
-pub fn boxfut_err<R>(e: impl ToString) -> BoxFut<R, BoxError> {
+pub fn boxfut_err<R>(e: impl std::fmt::Display) -> SvcBoxFut<R, BoxError> {
     let err: BoxError = e.to_string().into();
     Box::pin(async { Err(err) })
 }
 
-pub fn boxfut_res<E>(status: StatusCode) -> BoxFut<Response<Body>, E> {
+pub fn boxfut_res<E>(status: StatusCode) -> SvcBoxFut<Response<Body>, E> {
     let resp = response(status);
     Box::pin(async { Ok(resp) })
 }
@@ -48,6 +59,20 @@ pub fn handle_panic(err: Box<dyn Any + Send + 'static>) -> Response<Body> {
     internal_error()
 }
 
+// We create some utility functions to make Empty and Full bodies
+// fit our broadened Response body type.
+pub fn empty() -> Body {
+    Empty::<Bytes>::new()
+        .map_err(|never| match never {})
+        .boxed_unsync()
+}
+
+pub fn full<T: Into<Bytes>>(chunk: T) -> Body {
+    Full::new(chunk.into())
+        .map_err(|never| match never {})
+        .boxed_unsync()
+}
+
 /*
  * helper struct and function for service futures allowing to pass the nested
  * response body or return a HTTP message without a boxed future
@@ -60,6 +85,7 @@ pin_project! {
 }
 
 impl<B> ResponseBody<B> {
+    /// create a new body with a message
     pub(crate) fn with_msg(str: &str) -> Self {
         Self {
             inner: ResponseBodyInner::Custom {
@@ -68,6 +94,7 @@ impl<B> ResponseBody<B> {
         }
     }
 
+    /// wraps the body, use this if you want to pass the body unaltered
     pub(crate) fn wrap(body: B) -> Self {
         Self {
             inner: ResponseBodyInner::Body { body },

@@ -7,19 +7,16 @@ use std::{
 
 use anyhow::anyhow;
 use http::{Request, Response, StatusCode};
-use hyper_util::{
-    client::pool::{cache, map::Map, singleton::Singleton},
-    rt::TokioExecutor,
-};
+use hyper_util::client::pool::singleton::Singleton;
 use parking_lot::Mutex;
 use tower::{BoxError, Service, ServiceBuilder, ServiceExt, service_fn, util::BoxCloneService};
-use tracing::{debug, error};
+use tracing::debug;
 
 use super::{
     connector::UpstreamConnector,
     http::{Http1Connect, Http2Connect},
 };
-use crate::utils::{Body, BoxFut, Peer, PeerAddr, PeerProto, boxfut_err, response};
+use crate::utils::{Body, Peer, PeerAddr, SvcBoxFut, boxfut_err, response};
 
 pub struct ConnectionService<B> {
     table: Arc<Mutex<HashMap<PeerAddr, HttpClient<B>>>>,
@@ -77,7 +74,7 @@ where
 {
     type Response = Response<Body>;
     type Error = BoxError;
-    type Future = BoxFut<Self::Response, Self::Error>;
+    type Future = SvcBoxFut<Self::Response, Self::Error>;
 
     fn poll_ready(&mut self, _: &mut std::task::Context<'_>) -> Poll<Result<(), Self::Error>> {
         Poll::Ready(Ok(()))
@@ -109,7 +106,7 @@ where
                 }
             }
         };
-        Box::pin(async move { svc.call(req).await.inspect_err(|e| error!(%e)) })
+        svc.call(req)
     }
 }
 

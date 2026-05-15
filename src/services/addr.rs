@@ -36,7 +36,6 @@ where
         self.inner.poll_ready(cx).map_err(Into::into)
     }
 
-    #[tracing::instrument(skip_all)]
     fn call(&mut self, req: Request<B>) -> Self::Future {
         let (mut parts, body) = req.into_parts();
         debug!(?parts, "rewriting request");

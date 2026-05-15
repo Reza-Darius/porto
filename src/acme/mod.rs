@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 mod account;
+mod cert_store;
 mod challenge;
 mod helper;
 mod order;
@@ -9,7 +10,7 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Result, anyhow};
 use instant_acme::{Account, KeyAuthorization};
-use parking_lot::Mutex;
+use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
 use rustls::{
     ServerConfig,
     pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
@@ -41,12 +42,16 @@ pub struct PortoTLS {
 struct PortoTLSInner {
     /// path to credentials
     cred_path: PathBuf,
+
     /// ACME account
     account: Account,
+
     /// table of registered domains in the proxy
     peers: PeerTable,
+
     /// in memory cache
-    certs: Mutex<HashMap<Domain, (CertChainPem, KeyPem)>>,
+    store: Mutex<HashMap<Domain, (CertChainPem, KeyPem)>>,
+
     /// tokens for ACME challenged
     pending_challenges: Mutex<HashMap<AcmeToken, KeyAuthorization>>,
 
@@ -75,7 +80,7 @@ impl PortoTLS {
                 cred_path: path,
                 account,
                 peers,
-                certs: Mutex::new(HashMap::new()),
+                store: Mutex::new(HashMap::new()),
                 pending_challenges: Mutex::new(HashMap::new()),
 
                 resolver,
@@ -95,11 +100,24 @@ impl PortoTLS {
         Ok(store)
     }
 
+    pub fn register_challenge(&self, token: AcmeToken, key: KeyAuthorization) {
+        self.inner.pending_challenges.lock().insert(token, key);
+    }
+
+    pub fn get_chall_token(&self, token: &str) -> Option<MappedMutexGuard<'_, KeyAuthorization>> {
+        let guard = self.inner.pending_challenges.lock();
+        MutexGuard::try_map(guard, |map| map.get_mut(token)).ok()
+    }
+
+    pub fn remove_challenge(&self, token: &AcmeToken) {
+        self.inner.pending_challenges.lock().remove(token);
+    }
+
     /// check for expired certificates inside the in-memory cache
     fn check_certs(&self) -> Option<Vec<Domain>> {
         debug!("checking certs");
 
-        let guard = self.inner.certs.lock();
+        let guard = self.inner.store.lock();
 
         let expired_domains: Vec<_> = guard
             .iter()
@@ -115,11 +133,11 @@ impl PortoTLS {
         }
     }
 
-    /// checks the peer list to see if we have a certificate
+    /// checks the peer list to see if we need new certificates
     fn check_new_domains(&self) -> Option<Vec<Domain>> {
         debug!("checking for new domains");
 
-        let guard = self.inner.certs.lock();
+        let guard = self.inner.store.lock();
 
         let new_domains: Vec<_> = self
             .inner
@@ -144,11 +162,11 @@ impl PortoTLS {
             return Err(anyhow!("cant register expired certificates!"));
         }
 
-        let certs = CertificateDer::pem_slice_iter(certs.as_str().as_bytes())
+        let certs = CertificateDer::pem_slice_iter(certs.as_bytes())
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| anyhow!("could not read certificate: {e}"))?;
 
-        let key = PrivateKeyDer::from_pem_slice(key.as_str().as_bytes())
+        let key = PrivateKeyDer::from_pem_slice(key.as_bytes())
             .map_err(|e| anyhow!("could not read key: {e}"))?;
 
         let provider = rustls::crypto::aws_lc_rs::default_provider();

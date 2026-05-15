@@ -65,7 +65,7 @@ impl Service<Request<Incoming>> for Http1ChallSvc {
 
         info!(uri_token, "got ACME token");
 
-        let resp = match self.store.inner.pending_challenges.lock().get(uri_token) {
+        let resp = match self.store.get_chall_token(uri_token) {
             Some(key) => Response::new(full(key.as_str().to_string())),
             None => {
                 warn!("no key authorization found for token!");

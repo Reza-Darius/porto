@@ -6,6 +6,7 @@ use hyper_util::client::legacy::{Client, ResponseFuture};
 use hyper_util::rt::TokioTimer;
 use pin_project_lite::pin_project;
 use tower::{BoxError, Service};
+use tracing::error;
 
 use super::connector::UpstreamConnector;
 use crate::utils::*;
@@ -94,10 +95,30 @@ impl Future for UpstreamResponseFuture {
                 Ok(resp.map(|r| r.map_err(Into::into).boxed_unsync()))
             }
             Err(e) => {
-                // error!(?e, "couldnt send request");
+                error!(?e, "couldnt send request");
                 Ok(response(StatusCode::INTERNAL_SERVER_ERROR))
             }
         };
         std::task::Poll::Ready(r)
+    }
+}
+
+struct Foo<F> {
+    fut: F,
+}
+
+impl<F> Future for Foo<F>
+where
+    F: Future<Output = ()> + Unpin,
+{
+    type Output = ();
+
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        let this = self.get_mut();
+
+        std::pin::Pin::new(&mut this.fut).poll(cx)
     }
 }

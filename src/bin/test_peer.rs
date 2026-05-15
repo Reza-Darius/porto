@@ -94,7 +94,7 @@ async fn _hyper(_: hyper::Request<hyper::body::Incoming>) -> http::Response<port
     todo!()
 }
 
-async fn health() -> impl IntoResponse {
+async fn health() -> StatusCode {
     StatusCode::OK
 }
 
@@ -105,10 +105,10 @@ async fn comp() -> Response {
         .expect("the values are hard coded")
 }
 
-async fn echo() -> Response {
+async fn echo(req: Request) -> Response {
     Response::builder()
         .status(StatusCode::OK)
-        .body(Body::empty())
+        .body(req.into_body())
         .expect("the values are hard coded")
 }
 

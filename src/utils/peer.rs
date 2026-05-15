@@ -33,9 +33,14 @@ pub struct PeerTable {
 
 #[derive(Debug, Default)]
 struct PeerTableInner {
-    domain_table: RwLock<HashMap<Domain, PeerId>>,
-    alive_t: RwLock<HashMap<PeerId, Peer>>,
-    registered_peers: Mutex<Vec<Peer>>,
+    /// routing table mapping domains to peers
+    route: RwLock<HashMap<Domain, PeerId>>,
+
+    /// reachable peers
+    alive: RwLock<HashMap<PeerId, Peer>>,
+
+    /// list of peers for initialization
+    peers: Mutex<Vec<Peer>>,
 }
 
 // TODO: prevent duplicate addresses
@@ -51,7 +56,7 @@ impl PeerTable {
     pub fn init(config: &PortoConfig) -> Self {
         let table = PeerTable {
             inner: Arc::new(PeerTableInner {
-                registered_peers: Mutex::new(config.get_proxies().collect()),
+                peers: Mutex::new(config.get_proxies().collect()),
                 ..Default::default()
             }),
         };
@@ -77,45 +82,42 @@ impl PeerTable {
     pub fn register_peer(&self, peer: Peer) {
         debug!(id = %peer.id, addr = %peer.addr, "registering peer");
 
-        self.inner
-            .domain_table
-            .write()
-            .insert(peer.name.clone(), peer.id);
-        self.inner.alive_t.write().insert(peer.id, peer);
+        self.inner.route.write().insert(peer.name.clone(), peer.id);
+        self.inner.alive.write().insert(peer.id, peer);
     }
 
     pub fn evict_peer(&self, id: PeerId) -> Option<Peer> {
-        let peer = self.inner.alive_t.write().remove(&id)?;
-        self.inner.domain_table.write().remove(&peer.name);
+        let peer = self.inner.alive.write().remove(&id)?;
+        self.inner.route.write().remove(&peer.name);
         Some(peer)
     }
 
     /// fetches a reachable Peer
     pub fn get_peer(&self, host: &str) -> Option<Peer> {
         self.inner
-            .domain_table
+            .route
             .read()
             .get(host)
             .and_then(|id| self.get_peer_by_id(*id))
     }
 
     pub fn get_peer_by_id(&self, id: PeerId) -> Option<Peer> {
-        self.inner.alive_t.read().get(&id).cloned()
+        self.inner.alive.read().get(&id).cloned()
     }
 
     pub fn get_domains(&self) -> Vec<Domain> {
-        self.inner.domain_table.read().keys().cloned().collect()
+        self.inner.route.read().keys().cloned().collect()
     }
 
     pub fn get_reg_peers(&self) -> impl Iterator<Item = Peer> {
-        let mut guard = self.inner.registered_peers.lock();
+        let mut guard = self.inner.peers.lock();
         std::mem::take(&mut *guard).into_iter()
     }
 }
 
 impl Display for PeerTable {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for (domain, peer) in self.inner.domain_table.read().iter() {
+        for (domain, peer) in self.inner.route.read().iter() {
             write!(f, "Domain: {domain}, peer: {peer:?}")?;
         }
         std::fmt::Result::Ok(())
@@ -298,6 +300,13 @@ impl AsRef<str> for Domain {
 
 impl Borrow<str> for Domain {
     fn borrow(&self) -> &str {
-        self.as_str()
+        &self.0
     }
+}
+
+fn foo() {
+    let mut map: HashMap<String, String> = HashMap::new();
+    map.insert(String::from("hello"), String::from("world"));
+    let domain = Domain(Arc::from("hello"));
+    let r = map.get(domain.as_str());
 }

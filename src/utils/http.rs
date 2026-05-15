@@ -3,30 +3,13 @@ use std::sync::Arc;
 
 use http::request::Parts;
 use http::{Uri, header};
-use http_body_util::Empty;
-use http_body_util::{BodyExt, Full};
-use hyper::body::Bytes;
 use hyper::header::HOST;
 use hyper::header::HeaderValue;
 use hyper::{HeaderMap, Request, Response, StatusCode, Version};
 use tokio::net::unix::UCred;
 use tracing::debug;
 
-use crate::utils::{Body, PeerAddr};
-
-// We create some utility functions to make Empty and Full bodies
-// fit our broadened Response body type.
-pub fn empty() -> Body {
-    Empty::<Bytes>::new()
-        .map_err(|never| match never {})
-        .boxed_unsync()
-}
-
-pub fn full<T: Into<Bytes>>(chunk: T) -> Body {
-    Full::new(chunk.into())
-        .map_err(|never| match never {})
-        .boxed_unsync()
-}
+use crate::utils::{Body, PeerAddr, empty};
 
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
