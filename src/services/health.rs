@@ -7,7 +7,7 @@ use std::{
 use http::{Method, Request};
 use rand::RngExt;
 use tower::Service;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 use crate::{errors::TraceErr, services::upstream::hyper_client::UpstreamService, utils::*};
 
