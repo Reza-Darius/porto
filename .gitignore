@@ -5,9 +5,7 @@ perf.data
 perf.data.old
 profile.json.gz
 
-credentials
 pebble/
 example_cert.pem
 example_key.pem
-porto.toml
 debug.log

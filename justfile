@@ -5,10 +5,10 @@ cap:
     sudo setcap 'cap_net_bind_service=+ep' ./debug/server
 
 sr:
-    cargo run --release --bin server -- {{ server_addr }}
+    cargo run --release --bin server -- {{ server_addr }} 
 
 s:
-    cargo run --bin server -- {{ server_addr }}
+    cargo run --bin server -- {{ server_addr }} 
 
 pr:
     cargo run --release --bin peer

@@ -1,0 +1,15 @@
+bind = "127.0.0.1:3000"
+
+[tls]
+tls = true
+auto_cert = false
+cert_path = "credentials/testpeer.com+3.pem"
+key_path = "credentials/testpeer.com+3-key.pem"
+
+[[proxy]]
+domain = "testpeer.com"
+upstream = "127.0.0.2:8000"
+
+[[proxy]]
+domain = "testpeeruds.com"
+upstream = "/tmp/test_peer.sock"

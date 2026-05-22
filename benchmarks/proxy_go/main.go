@@ -109,7 +109,6 @@ func (p *ProxyService) DialBackend(host string) http.Client {
 	}
 	p.cons[host] = client
 	return client
-
 }
 
 func logLevelFromEnv() slog.Level {

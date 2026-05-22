@@ -26,11 +26,11 @@
 #                 - subnet: 10.30.50.0/24
 
 services:
-    pebble:
-        image: ghcr.io/letsencrypt/pebble:latest
-        command: -config test/config/pebble-config.json -strict
-        ports:
-            - 14000:14000 # HTTPS ACME API
-            - 15000:15000 # HTTPS Management API
-        extra_hosts:
-            - "acmetest.com:172.17.0.1"
+  pebble:
+    image: ghcr.io/letsencrypt/pebble:latest
+    command: -config test/config/pebble-config.json -strict
+    ports:
+      - 14000:14000 # HTTPS ACME API
+      - 15000:15000 # HTTPS Management API
+    extra_hosts:
+      - "acmetest.com:172.17.0.1"

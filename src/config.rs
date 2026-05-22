@@ -19,7 +19,7 @@ pub struct Cli {
     /// Addr and port for Porto to listen on, overrides config
     addr: Option<SocketAddr>,
 
-    /// Sets path to a porto.toml config file
+    /// Sets path to the porto.toml config file.
     #[arg(short, long, value_name = "FILE")]
     config: Option<PathBuf>,
 }
@@ -70,11 +70,14 @@ pub struct TlsConfig {
     #[serde(rename(deserialize = "tls"))]
     pub enabled: bool,
     pub auto_cert: bool,
+
     // for simple TLS
     pub cert_path: Option<PathBuf>,
     pub key_path: Option<PathBuf>,
+
     // for ACME
     pub credentials: Option<PathBuf>,
+
     #[serde(skip)]
     pub debug: bool, // for testing only
 }
@@ -150,11 +153,11 @@ pub fn setup_config() -> Result<PortoConfig> {
 
 fn parse_config_file(path: impl AsRef<Path>) -> Result<PortoConfig> {
     debug!("loading config from \"{}\"", path.as_ref().display());
+    let path = path.as_ref();
 
     let mut config: PortoConfig = path
-        .as_ref()
         .pipe(std::fs::read)
-        .with_context(|| anyhow!("path: {}", path.as_ref().display()))?
+        .with_context(|| anyhow!("path: {}", path.display()))?
         .pipe_as_ref(toml::from_slice)?;
 
     config.tls.validate()?;

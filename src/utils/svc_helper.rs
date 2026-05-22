@@ -1,5 +1,6 @@
 use std::{
     any::Any,
+    convert::Infallible,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -89,7 +90,16 @@ impl<B> ResponseBody<B> {
     pub(crate) fn with_msg(str: &str) -> Self {
         Self {
             inner: ResponseBodyInner::Custom {
-                body: Full::from(str.to_string()),
+                body: Full::from(str.to_string()).map_err(Into::into).boxed_unsync(),
+            },
+        }
+    }
+
+    /// create a empty body
+    pub(crate) fn empty() -> Self {
+        Self {
+            inner: ResponseBodyInner::Custom {
+                body: Empty::new().map_err(Into::into).boxed_unsync(),
             },
         }
     }
@@ -107,7 +117,7 @@ pin_project! {
     pub enum ResponseBodyInner<B> {
         Custom {
             #[pin]
-            body: Full<Bytes>,
+            body: UnsyncBoxBody<Bytes, BoxError>,
         },
         Body {
             #[pin]
@@ -119,17 +129,18 @@ pin_project! {
 impl<B> hyper::body::Body for ResponseBody<B>
 where
     B: hyper::body::Body<Data = Bytes>,
+    B::Error: Into<BoxError>,
 {
     type Data = Bytes;
-    type Error = B::Error;
+    type Error = BoxError;
 
     fn poll_frame(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
         match self.project().inner.project() {
-            BodyProj::Custom { body } => body.poll_frame(cx).map_err(|err| match err {}),
-            BodyProj::Body { body } => body.poll_frame(cx),
+            BodyProj::Custom { body } => body.poll_frame(cx),
+            BodyProj::Body { body } => body.poll_frame(cx).map_err(Into::into),
         }
     }
 
