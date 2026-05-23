@@ -5,6 +5,7 @@ use std::{
 
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
+use http::Version;
 use serde::Deserialize;
 use tap::Pipe;
 use tracing::{debug, instrument};
@@ -30,7 +31,6 @@ pub struct PortoConfig {
     #[serde(default)]
     pub tls: TlsConfig,
     #[serde(default)]
-    pub service: ServiceConfig,
     proxy: Vec<ProxyConfig>,
 }
 
@@ -40,6 +40,8 @@ struct ProxyConfig {
     pub upstream: PeerAddr,
     #[serde(default)]
     pub http2: bool,
+    #[serde(default)]
+    pub config: ServiceConfig,
 }
 
 impl PortoConfig {
@@ -58,9 +60,10 @@ impl From<ProxyConfig> for Peer {
             value.domain,
             value.upstream,
             match value.http2 {
-                true => PeerProto::Http2,
-                false => PeerProto::Http1,
+                true => Version::HTTP_2,
+                false => Version::HTTP_11,
             },
+            value.config
         )
     }
 }
@@ -112,12 +115,14 @@ impl Default for TlsConfig {
     }
 }
 
+/// defaults to everything enabled
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct ServiceConfig {
     pub health: bool,
     pub limit: bool,
     pub cache: bool,
+    pub comp: bool,
 }
 
 impl Default for ServiceConfig {
@@ -126,6 +131,7 @@ impl Default for ServiceConfig {
             health: true,
             limit: true,
             cache: true,
+            comp: true,
         }
     }
 }

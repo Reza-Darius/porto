@@ -19,7 +19,7 @@ struct HealthService {
 
     /// this queue corresponds with the alive_backend table
     alive_q: Queue<QEntry>,
-    alive_t: PeerTable, // the alive peers live in the peertable
+    alive_t: RouteTable, // the alive peers live in the peertable
 
     /// this is a unique queue only the health worker cares about
     dead_q: Queue<QEntry>,
@@ -84,7 +84,7 @@ impl Default for HealthServiceConfig {
 }
 
 impl HealthService {
-    fn new(config: HealthServiceConfig, peers: PeerTable) -> Self {
+    fn new(config: HealthServiceConfig, peers: RouteTable) -> Self {
         HealthService {
             client: UpstreamService::new(),
             alive_q: Queue::new(config.q_cap as usize),
@@ -145,7 +145,7 @@ impl HealthService {
         entry.reset();
 
         if self.check_peer_alive(&peer).await {
-            debug!(peer = %peer.name, "peer OK");
+            debug!(peer = %peer.name(), "peer OK");
 
             self.alive_q
                 .push(entry)
@@ -153,7 +153,7 @@ impl HealthService {
             self.alive_t.register_peer(peer);
             self.dead_t.remove(&entry.id);
         } else {
-            warn!(peer = %peer.name, "peer unreachable");
+            warn!(peer = %peer.name(), "peer unreachable");
 
             self.dead_q
                 .push(entry)
@@ -164,7 +164,7 @@ impl HealthService {
     }
 
     async fn check_peer_alive(&mut self, peer: &Peer) -> bool {
-        let uri = peer.addr.to_uri("/health").trace_err().unwrap();
+        let uri = peer.addr().to_uri("/health").trace_err().unwrap();
 
         let mut req = Request::builder()
             .method(Method::GET)
@@ -172,7 +172,7 @@ impl HealthService {
             .body(empty())
             .expect("the values are hard coded");
 
-        req.extensions_mut().insert(peer.addr.clone());
+        req.extensions_mut().insert(peer.addr().clone());
 
         tokio::select! {
             res = self.client.call(req) => {
@@ -191,17 +191,17 @@ impl HealthService {
     }
 
     async fn register_new_peer(&mut self, peer: Peer) {
-        let entry = QEntry::new(peer.id);
+        let entry = QEntry::new(peer.id());
 
         if self.check_peer_alive(&peer).await {
-            debug!(peer = %peer.name, "peer OK");
+            debug!(peer = %peer.name(), "peer OK");
 
             self.alive_q
                 .push(entry)
                 .expect("we dont handle full queue yet");
             self.alive_t.register_peer(peer);
         } else {
-            warn!(peer = %peer.name, "peer unreachable");
+            warn!(peer = %peer.name(), "peer unreachable");
 
             self.dead_q
                 .push(entry)
@@ -211,7 +211,7 @@ impl HealthService {
     }
 }
 
-pub fn setup_health_service(config: HealthServiceConfig, peers: PeerTable) {
+pub fn setup_health_service(config: HealthServiceConfig, peers: RouteTable) {
     tokio::spawn(async move {
         info!("setting up health service");
 

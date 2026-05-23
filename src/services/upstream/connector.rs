@@ -112,14 +112,14 @@ impl tower::Service<Uri> for UpstreamConnector {
                 std::io::Error::new(std::io::ErrorKind::InvalidInput, e)
             })?;
 
-            match &*addr.clone() {
-                crate::utils::PeerAddrInner::Ipv4(socket_addr) => {
+            match addr {
+                crate::utils::PeerAddr::Ipv4(socket_addr) => {
                     let stream = TcpStream::connect(socket_addr)
                         .await
                         .inspect_err(|e| error!(%e, %addr, "tcp connect error"))?;
                     Ok(TokioIo::new(Upstream::Tcp { s: stream }))
                 }
-                crate::utils::PeerAddrInner::Uds(_) => {
+                crate::utils::PeerAddr::Uds(_) => {
                     let path = parse_socket_path(&uri)?;
                     debug!(path = %path.display(), "parsed UDS path");
                     let stream = UnixStream::connect(path)
@@ -172,15 +172,15 @@ impl tower::Service<PeerAddr> for UpstreamConnector {
     fn call(&mut self, addr: PeerAddr) -> Self::Future {
         Box::pin(async move {
             debug!(%addr, "dialing connection");
-            match &*addr {
-                crate::utils::PeerAddrInner::Ipv4(socket_addr) => {
+            match addr {
+                crate::utils::PeerAddr::Ipv4(socket_addr) => {
                     let stream = TcpStream::connect(socket_addr)
                         .await
                         .inspect_err(|e| error!(%e, %addr, "tcp connect error"))?;
                     debug!(%addr, "TCP established");
                     Ok(Upstream::Tcp { s: stream })
                 }
-                crate::utils::PeerAddrInner::Uds(path_buf) => {
+                crate::utils::PeerAddr::Uds(ref path_buf) => {
                     let stream = UnixStream::connect(path_buf)
                         .await
                         .inspect_err(|e| error!(%e, %addr, "uds connect error"))?;

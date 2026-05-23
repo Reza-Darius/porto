@@ -2,11 +2,11 @@ use std::time::Duration;
 
 use http_body_util::BodyExt;
 use hyper::StatusCode;
-use tower::{ServiceBuilder, ServiceExt, layer::layer_fn, util::option_layer};
+use tower::{ServiceBuilder, ServiceExt};
 use tower_http::{
     catch_panic::CatchPanicLayer,
-    compression::{Compression, CompressionLayer},
-    limit::{RequestBodyLimit, RequestBodyLimitLayer},
+    compression::{Compression, CompressionLayer, DefaultPredicate, Predicate},
+    limit::RequestBodyLimitLayer,
     timeout::TimeoutLayer,
     trace::TraceLayer,
 };
@@ -14,22 +14,17 @@ use tower_http::{
 use crate::{
     config::PortoConfig,
     services::{
-        HealthServiceConfig,
-        addr::AddrServiceLayer,
-        cache::ResponseCacheLayer,
-        ratelimit::{RateLimitLayer, RateLimiter},
-        req_validation::ReqValidationLayer,
-        setup_health_service,
-        upstream::{
+        HealthServiceConfig, addr::AddrServiceLayer, cache::ResponseCacheLayer, comp::{PeerCompSettings, setup_response_compresson}, ratelimit::RateLimitLayer, req_validation::ReqValidationLayer, setup_health_service, upstream::{
             connection_table::{ConnectionConfig, ConnectionService},
             hyper_client,
-        },
+        }
     },
-    utils::{HyperService, PeerTable, handle_panic},
+    utils::{HyperService, RouteTable, handle_panic},
 };
 
+// legacy hyper client implementation
 pub fn setup_service(config: &PortoConfig) -> HyperService {
-    let table = PeerTable::init(config);
+    let table = RouteTable::init(config);
 
     let service = ServiceBuilder::new()
         .layer(TraceLayer::new_for_http())
@@ -49,13 +44,9 @@ pub fn setup_service(config: &PortoConfig) -> HyperService {
 }
 
 pub fn setup_service4(config: &PortoConfig) -> HyperService {
-    let peers = PeerTable::init(config);
+    let peers = RouteTable::init(config);
 
-    if config.service.health {
-        setup_health_service(HealthServiceConfig::default(), peers.clone());
-    } else {
-        // TODO: account for missing health service in peer table
-    }
+    setup_health_service(HealthServiceConfig::default(), peers.clone());
 
     ServiceBuilder::new()
         .layer(TraceLayer::new_for_http())
@@ -67,11 +58,8 @@ pub fn setup_service4(config: &PortoConfig) -> HyperService {
         .layer(RateLimitLayer::new())
         .layer(ReqValidationLayer::new())
         .layer(RequestBodyLimitLayer::new(4096))
-        .layer_fn(|svc| Compression::new(svc).gzip(true))
+        .layer_fn(setup_response_compresson)
         .layer(AddrServiceLayer::new(peers))
-        .layer(option_layer(
-            config.service.cache.then(|| ResponseCacheLayer::new(1024)),
-        ))
         .service(ConnectionService::new(ConnectionConfig::default()))
         // using a BoxError breaks the whole thing and i cant figure out why
         .map_err(anyhow::Error::from_boxed)

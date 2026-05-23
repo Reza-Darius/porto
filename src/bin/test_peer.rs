@@ -1,4 +1,4 @@
-use std::{ops::Deref, time::Duration};
+use std::time::Duration;
 
 use anyhow::Result;
 use axum::{
@@ -13,7 +13,7 @@ use http::StatusCode;
 use http::header::CACHE_CONTROL;
 use hyper::server::conn::http1;
 use hyper_util::{rt::TokioIo, service::TowerToHyperService};
-use porto::utils::{PeerAddr, PeerAddrInner, setup_tracing};
+use porto::utils::{PeerAddr, setup_tracing};
 use tokio::task::JoinSet;
 use tower::Service;
 use tracing::{error, info};
@@ -39,8 +39,8 @@ async fn main() -> Result<()> {
     for addr in listen_addr.into_iter() {
         let route = route.clone();
         set.spawn(async move {
-            match addr.deref() {
-                PeerAddrInner::Ipv4(sock_addr) => {
+            match &addr {
+                PeerAddr::Ipv4(sock_addr) => {
                     let listener = tokio::net::TcpListener::bind(sock_addr)
                         .await
                         .inspect_err(|e| error!(%e))?;
@@ -60,7 +60,7 @@ async fn main() -> Result<()> {
                         });
                     }
                 }
-                PeerAddrInner::Uds(sock_path) => {
+                PeerAddr::Uds(sock_path) => {
                     if sock_path.exists() {
                         tokio::fs::remove_file(sock_path)
                             .await

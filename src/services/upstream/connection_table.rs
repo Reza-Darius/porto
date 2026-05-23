@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::anyhow;
-use http::{Request, Response, StatusCode};
+use http::{Request, Response, StatusCode, Version};
 use hyper_util::client::pool::singleton::Singleton;
 use parking_lot::Mutex;
 use tower::{BoxError, Service, ServiceBuilder, ServiceExt, service_fn, util::BoxCloneService};
@@ -84,8 +84,8 @@ where
         let Some(peer) = req.extensions().get::<Peer>().cloned() else {
             return boxfut_err("no peer address found on request");
         };
-        let prot = peer.prot;
-        let mut svc = match self.table.lock().entry(peer.addr) {
+        let prot = peer.prot();
+        let mut svc = match self.table.lock().entry(peer.addr().clone()) {
             std::collections::hash_map::Entry::Occupied(occupied_entry) => {
                 debug!(addr = %occupied_entry.key(), "getting client from table");
                 occupied_entry.get().clone()
@@ -96,13 +96,10 @@ where
 
                 debug!(%addr, "initializing fresh client");
 
-                match prot {
-                    crate::utils::PeerProto::Http1 => {
-                        vacant_entry.insert(new_http1_client(addr, self)).clone()
-                    }
-                    crate::utils::PeerProto::Http2 => {
-                        vacant_entry.insert(new_http2_client(addr, self)).clone()
-                    }
+                match *prot {
+                    Version::HTTP_11 => vacant_entry.insert(new_http1_client(addr, self)).clone(),
+                    Version::HTTP_2 => vacant_entry.insert(new_http2_client(addr, self)).clone(),
+                    _ => panic!("non supported HTTP"),
                 }
             }
         };
@@ -174,7 +171,7 @@ where
             let Ok(mut sender) = http1_svc
                 .ready() // important to call ready here, otherwise the worker panics
                 .await?
-                .call(peer.addr) // call pool
+                .call(peer.addr().clone()) // call pool
                 .await
                 .inspect_err(|e| tracing::error!(%e, "couldnt get sender"))
             else {
@@ -182,10 +179,19 @@ where
             };
 
             debug!("sending request");
-            sender.ready().await?.call(req).await.or_else(|e| {
-                tracing::error!(%e, "sending failed");
-                Ok(response(StatusCode::INTERNAL_SERVER_ERROR))
-            })
+            sender
+                .ready()
+                .await?
+                .call(req)
+                .await
+                .map(|mut resp| {
+                    resp.extensions_mut().insert(peer);
+                    resp
+                })
+                .or_else(|e| {
+                    tracing::error!(%e, "sending failed");
+                    Ok(response(StatusCode::INTERNAL_SERVER_ERROR))
+                })
         }
     });
     http1.boxed_clone()
@@ -247,7 +253,7 @@ where
             let Ok(mut sender) = http2_svc
                 .ready() // important to call ready here, otherwise the worker panics
                 .await?
-                .call(peer.addr) // call pool
+                .call(peer.addr().clone()) // call pool
                 .await
                 .inspect_err(|e| tracing::error!(%e, "couldnt get sender"))
             else {
@@ -255,10 +261,19 @@ where
             };
 
             debug!("sending request");
-            sender.ready().await?.call(req).await.or_else(|e| {
-                tracing::error!(%e, "sending failed");
-                Ok(response(StatusCode::INTERNAL_SERVER_ERROR))
-            })
+            sender
+                .ready()
+                .await?
+                .call(req)
+                .await
+                .map(|mut resp| {
+                    resp.extensions_mut().insert(peer);
+                    resp
+                })
+                .or_else(|e| {
+                    tracing::error!(%e, "sending failed");
+                    Ok(response(StatusCode::INTERNAL_SERVER_ERROR))
+                })
         }
     });
     http2.boxed_clone()
