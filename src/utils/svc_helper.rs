@@ -1,6 +1,5 @@
 use std::{
     any::Any,
-    convert::Infallible,
     pin::Pin,
     task::{Context, Poll},
 };

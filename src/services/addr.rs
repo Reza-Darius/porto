@@ -15,7 +15,7 @@ use crate::utils::*;
 /// however, if the underlying service fails, it will propagate that error
 #[derive(Clone)]
 pub struct AddrService<S> {
-    table: PeerTable,
+    table: RouteTable,
     inner: S,
 }
 
@@ -58,7 +58,7 @@ where
         };
 
         // overwrite host header in case the upstream expects http1
-        if parts.version == Version::HTTP_2 && peer.prot == PeerProto::Http1 {
+        if parts.version == Version::HTTP_2 && *peer.prot() == Version::HTTP_11 {
             parts.headers.insert(
                 hyper::header::HOST,
                 hyper::header::HeaderValue::from_str(req_host).unwrap(),
@@ -67,7 +67,7 @@ where
 
         // rewrite URI
         // TODO: use origin form when not using hyper client
-        parts.uri = match uri_absolute(&parts, &peer.addr) {
+        parts.uri = match uri_absolute(&parts, &peer.addr()) {
             Ok(uri) => uri,
             Err(e) => {
                 error!(%e, "couldnt create absolute uri");
@@ -78,7 +78,7 @@ where
             }
         };
 
-        debug!(peer_addr= %peer.addr, ?parts, "rewritten to response");
+        debug!(peer_addr= %peer.addr(), ?parts, "rewritten to response");
 
         let mut req = Request::from_parts(parts, body);
 
@@ -134,11 +134,11 @@ where
 
 #[derive(Debug, Clone)]
 pub struct AddrServiceLayer {
-    table: PeerTable,
+    table: RouteTable,
 }
 
 impl AddrServiceLayer {
-    pub fn new(table: PeerTable) -> Self {
+    pub fn new(table: RouteTable) -> Self {
         AddrServiceLayer { table }
     }
 }

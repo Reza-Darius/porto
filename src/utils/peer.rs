@@ -2,7 +2,6 @@
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::fmt::Display;
-use std::ops::Deref;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -18,7 +17,7 @@ use parking_lot::{Mutex, RwLock};
 use serde::Deserialize;
 use tracing::debug;
 
-use crate::config::PortoConfig;
+use crate::config::{PortoConfig, ServiceConfig};
 
 /// monotonic counter for peer ids
 static ID_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -27,14 +26,14 @@ static ID_COUNTER: AtomicU64 = AtomicU64::new(0);
 ///
 /// shared across the application
 #[derive(Debug, Clone, Default)]
-pub struct PeerTable {
-    inner: Arc<PeerTableInner>,
+pub struct RouteTable {
+    inner: Arc<RouteTableInner>,
 }
 
 #[derive(Debug, Default)]
-struct PeerTableInner {
+struct RouteTableInner {
     /// routing table mapping domains to peers
-    route: RwLock<HashMap<Domain, PeerId>>,
+    domains: RwLock<HashMap<Domain, PeerId>>,
 
     /// reachable peers
     alive: RwLock<HashMap<PeerId, Peer>>,
@@ -45,17 +44,17 @@ struct PeerTableInner {
 
 // TODO: prevent duplicate addresses
 
-impl PeerTable {
+impl RouteTable {
     fn new() -> Self {
-        PeerTable {
-            inner: Arc::new(PeerTableInner {
+        RouteTable {
+            inner: Arc::new(RouteTableInner {
                 ..Default::default()
             }),
         }
     }
     pub fn init(config: &PortoConfig) -> Self {
-        let table = PeerTable {
-            inner: Arc::new(PeerTableInner {
+        let table = RouteTable {
+            inner: Arc::new(RouteTableInner {
                 peers: Mutex::new(config.get_proxies().collect()),
                 ..Default::default()
             }),
@@ -67,12 +66,12 @@ impl PeerTable {
 
     // initializes a proxy table under the assumption they are reachable
     pub fn init_debug<const N: usize>(value: &[(&str, &str); N]) -> Result<Self> {
-        let table = PeerTable::new();
+        let table = RouteTable::new();
 
         for (domain, addr) in value.iter() {
             let domain = Domain::parse(domain)?;
             let upstream = PeerAddr::try_from(*addr)?;
-            let p = Peer::new(domain, upstream, PeerProto::Http1);
+            let p = Peer::new(domain, upstream, Version::HTTP_11, ServiceConfig::default());
             table.register_peer(p);
         }
         Ok(table)
@@ -80,22 +79,25 @@ impl PeerTable {
 
     /// the caller has to ensure the peer is reachable
     pub fn register_peer(&self, peer: Peer) {
-        debug!(id = %peer.id, addr = %peer.addr, "registering peer");
+        debug!(id = %peer.id(), addr = %peer.addr(), "registering peer");
 
-        self.inner.route.write().insert(peer.name.clone(), peer.id);
-        self.inner.alive.write().insert(peer.id, peer);
+        self.inner
+            .domains
+            .write()
+            .insert(peer.name().clone(), peer.id());
+        self.inner.alive.write().insert(peer.id(), peer);
     }
 
     pub fn evict_peer(&self, id: PeerId) -> Option<Peer> {
         let peer = self.inner.alive.write().remove(&id)?;
-        self.inner.route.write().remove(&peer.name);
+        self.inner.domains.write().remove(peer.name());
         Some(peer)
     }
 
     /// fetches a reachable Peer
     pub fn get_peer(&self, host: &str) -> Option<Peer> {
         self.inner
-            .route
+            .domains
             .read()
             .get(host)
             .and_then(|id| self.get_peer_by_id(*id))
@@ -106,7 +108,7 @@ impl PeerTable {
     }
 
     pub fn get_domains(&self) -> Vec<Domain> {
-        self.inner.route.read().keys().cloned().collect()
+        self.inner.domains.read().keys().cloned().collect()
     }
 
     pub fn get_reg_peers(&self) -> impl Iterator<Item = Peer> {
@@ -115,9 +117,9 @@ impl PeerTable {
     }
 }
 
-impl Display for PeerTable {
+impl Display for RouteTable {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        for (domain, peer) in self.inner.route.read().iter() {
+        for (domain, peer) in self.inner.domains.read().iter() {
             write!(f, "Domain: {domain}, peer: {peer:?}")?;
         }
         std::fmt::Result::Ok(())
@@ -138,29 +140,59 @@ impl PeerId {
 /// cheap-ish to clone
 #[derive(Debug, Clone)]
 pub struct Peer {
+    inner: Arc<PeerInner>,
+}
+
+#[derive(Debug)]
+pub struct PeerInner {
     pub id: PeerId,
     pub name: Domain,
     pub addr: PeerAddr,
-    /// supported HTTP protocol
-    pub prot: PeerProto,
+    pub prot: Version,
+    pub config: ServiceConfig,
 }
 
 impl Peer {
-    pub fn new(name: Domain, addr: PeerAddr, prot: PeerProto) -> Self {
+    pub fn new(name: Domain, addr: PeerAddr, prot: Version, config: ServiceConfig) -> Self {
         Peer {
-            id: PeerId::new(),
-            name,
-            addr,
-            prot,
+            inner: Arc::new(PeerInner {
+                id: PeerId::new(),
+                name,
+                addr,
+                prot,
+                config,
+            }),
         }
+    }
+
+    pub fn id(&self) -> PeerId {
+        self.inner.id
+    }
+
+    pub fn name(&self) -> &Domain {
+        &self.inner.name
+    }
+
+    pub fn addr(&self) -> &PeerAddr {
+        &self.inner.addr
+    }
+
+    pub fn prot(&self) -> &Version {
+        &self.inner.prot
+    }
+
+    pub fn config(&self) -> &ServiceConfig {
+        &self.inner.config
     }
 }
 
 // TODO: refactor this into a wrapper type
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub struct PeerAddr {
-    inner: Arc<PeerAddrInner>,
+#[derive(Debug, Clone, Deserialize, Hash, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(untagged)]
+pub enum PeerAddr {
+    Ipv4(std::net::SocketAddr),
+    Uds(PathBuf), // must be second so serde evaluates in the right order
 }
 
 impl PeerAddr {
@@ -169,11 +201,11 @@ impl PeerAddr {
     where
         P: TryInto<PathAndQuery>,
     {
-        let uri = match &**self {
-            PeerAddrInner::Uds(socket_addr) => {
+        let uri = match self {
+            PeerAddr::Uds(socket_addr) => {
                 UdsUri::new(socket_addr, path.try_into()?.as_str()).into()
             }
-            PeerAddrInner::Ipv4(addr) => {
+            PeerAddr::Ipv4(addr) => {
                 let authority: Authority = Authority::from_str(&addr.to_string()).unwrap();
                 Uri::builder()
                     .scheme("http")
@@ -184,18 +216,6 @@ impl PeerAddr {
             }
         };
         Ok(uri)
-    }
-}
-
-impl<'de> Deserialize<'de> for PeerAddr {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let inner = PeerAddrInner::deserialize(deserializer)?;
-        Ok(PeerAddr {
-            inner: Arc::new(inner),
-        })
     }
 }
 
@@ -211,47 +231,24 @@ impl TryFrom<http::Uri> for PeerAddr {
     }
 }
 
-impl Borrow<PeerAddrInner> for PeerAddr {
-    fn borrow(&self) -> &PeerAddrInner {
-        &self.inner
-    }
-}
-
-impl Deref for PeerAddr {
-    type Target = PeerAddrInner;
-
-    fn deref(&self) -> &Self::Target {
-        &self.inner
-    }
-}
-
-#[derive(Debug, Clone, Deserialize, Hash, PartialEq, Eq, PartialOrd, Ord)]
-#[serde(untagged)]
-pub enum PeerAddrInner {
-    Ipv4(std::net::SocketAddr),
-    Uds(PathBuf), // must be second so serde evaluates in the right order
-}
-
 impl TryFrom<&str> for PeerAddr {
     type Error = anyhow::Error;
 
     fn try_from(value: &str) -> std::result::Result<Self, Self::Error> {
-        let inner = value
+        let addr = value
             .parse::<std::net::SocketAddr>()
-            .map(PeerAddrInner::Ipv4)
-            .or_else(|_| Ok::<_, anyhow::Error>(PeerAddrInner::Uds(PathBuf::from_str(value)?)))?;
+            .map(PeerAddr::Ipv4)
+            .or_else(|_| Ok::<_, anyhow::Error>(PeerAddr::Uds(PathBuf::from_str(value)?)))?;
 
-        Ok(PeerAddr {
-            inner: Arc::new(inner),
-        })
+        Ok(addr)
     }
 }
 
 impl Display for PeerAddr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match *self.inner {
-            PeerAddrInner::Ipv4(ref socket_addr) => write!(f, "{}", socket_addr),
-            PeerAddrInner::Uds(ref path_buf) => write!(f, "{}", path_buf.display()),
+        match *self {
+            PeerAddr::Ipv4(ref socket_addr) => write!(f, "{}", socket_addr),
+            PeerAddr::Uds(ref path_buf) => write!(f, "{}", path_buf.display()),
         }
     }
 }
@@ -303,6 +300,12 @@ impl Borrow<str> for Domain {
         &self.0
     }
 }
+
+// impl Borrow<str> for &Domain {
+//     fn borrow(&self) -> &str {
+//         &self.0
+//     }
+// }
 
 fn foo() {
     let mut map: HashMap<String, String> = HashMap::new();

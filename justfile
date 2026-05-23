@@ -1,4 +1,4 @@
-server_addr := "127.0.0.1:4000"
+server_addr := "127.0.0.1:3000"
 
 cap:
     sudo setcap 'cap_net_bind_service=+ep' ./target/server

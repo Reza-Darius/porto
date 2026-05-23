@@ -47,7 +47,7 @@ struct PortoTLSInner {
     account: Account,
 
     /// table of registered domains in the proxy
-    peers: PeerTable,
+    peers: RouteTable,
 
     /// in memory cache
     store: Mutex<HashMap<Domain, (CertChainPem, KeyPem)>>,
@@ -61,7 +61,7 @@ struct PortoTLSInner {
 }
 
 impl PortoTLS {
-    pub async fn init(config: &TlsConfig, peers: PeerTable) -> Result<Self> {
+    pub async fn init(config: &TlsConfig, peers: RouteTable) -> Result<Self> {
         let path = config
             .credentials
             .clone()
@@ -72,7 +72,7 @@ impl PortoTLS {
         debug!(%peers);
 
         let resolver = Arc::new(Resolver::new());
-        let server_config = setup_rustls_config(resolver.clone());
+        let server_config = setup_rustls_config(config, resolver.clone());
         let account = get_account(config.debug, &path).await?;
 
         let store = PortoTLS {
@@ -280,7 +280,7 @@ mod tests {
 
         let addr = "0.0.0.0:5002"; // port for pebble ACME server
 
-        let domains = PeerTable::init_debug(&[("acmetest.com", "1.1.1.1:6767")])?;
+        let domains = RouteTable::init_debug(&[("acmetest.com", "1.1.1.1:6767")])?;
 
         let listener = tokio::net::TcpListener::bind(addr).await?;
         let tls = PortoTLS::init(&tls_config, domains).await.unwrap();
