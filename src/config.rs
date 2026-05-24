@@ -1,6 +1,5 @@
 use std::{
-    net::SocketAddr,
-    path::{Path, PathBuf},
+    collections::HashSet, net::SocketAddr, path::{Path, PathBuf}
 };
 
 use anyhow::{Context, Result, anyhow};
@@ -63,7 +62,7 @@ impl From<ProxyConfig> for Peer {
                 true => Version::HTTP_2,
                 false => Version::HTTP_11,
             },
-            value.config
+            value.config,
         )
     }
 }
@@ -170,11 +169,29 @@ fn parse_config_file(path: impl AsRef<Path>) -> Result<PortoConfig> {
 
     if config.proxy.is_empty() {
         return Err(anyhow!(
-            "No upstream paths provided! Configure at least one Proxy"
+            "Config error: no upstream paths provided! Configure at least one Proxy"
+        ));
+    }
+
+    if !check_duplicates(&config.proxy) {
+        return Err(anyhow!(
+            "Config error: duplicate proxy entires"
         ));
     }
 
     Ok(config)
+}
+
+fn check_duplicates(proxies: &[ProxyConfig]) -> bool {
+    let mut peers = HashSet::new();
+    for proxy in proxies.iter() {
+        if !peers.contains(&proxy.domain) {
+            peers.insert(proxy.domain.clone());
+        } else {
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(test)]

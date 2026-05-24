@@ -1,6 +1,6 @@
 #![allow(clippy::new_without_default)]
 use std::borrow::Borrow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Display;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -15,7 +15,7 @@ use http::{Uri, Version};
 use hyperlocal::Uri as UdsUri;
 use parking_lot::{Mutex, RwLock};
 use serde::Deserialize;
-use tracing::debug;
+use tracing::{debug, error};
 
 use crate::config::{PortoConfig, ServiceConfig};
 
@@ -32,7 +32,6 @@ pub struct RouteTable {
 
 #[derive(Debug, Default)]
 struct RouteTableInner {
-    /// routing table mapping domains to peers
     domains: RwLock<HashMap<Domain, PeerId>>,
 
     /// reachable peers
@@ -53,12 +52,26 @@ impl RouteTable {
         }
     }
     pub fn init(config: &PortoConfig) -> Self {
+
+        // checking for duplicate entries
+        let mut peers = HashSet::new();
+        for proxy in config.get_proxies() {
+            if !peers.contains(proxy.name()) {
+                peers.insert(proxy.name().clone());
+            } else {
+                error!("Invalid config: duplicate proxy entries");
+                panic!("Invalid config: duplicate proxy entries")
+            }
+        }
+
         let table = RouteTable {
             inner: Arc::new(RouteTableInner {
                 peers: Mutex::new(config.get_proxies().collect()),
                 ..Default::default()
             }),
         };
+
+
 
         debug!("initialized domains {table}");
         table
@@ -186,7 +199,7 @@ impl Peer {
     }
 }
 
-// TODO: refactor this into a wrapper type
+// TODO: Change to Arc<Path> maybe?
 
 #[derive(Debug, Clone, Deserialize, Hash, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(untagged)]

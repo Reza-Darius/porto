@@ -4,6 +4,7 @@ use std::{borrow::Borrow, sync::Arc, time::SystemTime};
 
 use derive_more::Display;
 use foyer::{Cache, CacheBuilder, EvictionConfig, S3FifoConfig};
+use futures::{FutureExt, TryFutureExt};
 use http_body_util::BodyExt;
 use http_cache_semantics::{AfterResponse, CachePolicy};
 use hyper::{Request, Response, body::Bytes};
@@ -40,6 +41,15 @@ where
         let store = self.store.clone();
         let mut svc = svc_clone(&mut self.inner);
 
+        if !req
+            .extensions()
+            .get::<Peer>()
+            .expect("it needs to be there")
+            .config()
+            .cache
+        {
+            return svc.call(req).map_err(Into::into).boxed();
+        }
         Box::pin(async move {
             let Ok(key) = CacheKey::from_req(&req) else {
                 let e = Box::new(CacheError::CantCreateKey);

@@ -14,7 +14,7 @@ use pin_project_lite::pin_project;
 use tower::{BoxError, Layer, Service};
 use tracing::{debug, warn};
 
-use crate::utils::ResponseBody;
+use crate::utils::{Peer, ResponseBody};
 
 const BUCKET_SIZE: u16 = 10;
 const REFILL_INTERVAL: Duration = Duration::from_mins(1);
@@ -183,6 +183,12 @@ where
         let Some(addr) = req.extensions().get::<SocketAddr>() else {
             return RateLimitFuture::NoAddrFoun;
         };
+
+        if !req.extensions().get::<Peer>().expect("it needs to be there").config().limit {
+            return RateLimitFuture::Ok {
+                fut: self.inner.call(req),
+            }
+        }
 
         if self.has_token(*addr) {
             RateLimitFuture::Ok {
