@@ -52,26 +52,12 @@ impl RouteTable {
         }
     }
     pub fn init(config: &PortoConfig) -> Self {
-
-        // checking for duplicate entries
-        let mut peers = HashSet::new();
-        for proxy in config.get_proxies() {
-            if !peers.contains(proxy.name()) {
-                peers.insert(proxy.name().clone());
-            } else {
-                error!("Invalid config: duplicate proxy entries");
-                panic!("Invalid config: duplicate proxy entries")
-            }
-        }
-
         let table = RouteTable {
             inner: Arc::new(RouteTableInner {
                 peers: Mutex::new(config.get_proxies().collect()),
                 ..Default::default()
             }),
         };
-
-
 
         debug!("initialized domains {table}");
         table
@@ -149,8 +135,6 @@ impl PeerId {
 }
 
 /// a backend peer to upstream requests to
-///
-/// cheap-ish to clone
 #[derive(Debug, Clone)]
 pub struct Peer {
     inner: Arc<PeerInner>,
@@ -312,17 +296,4 @@ impl Borrow<str> for Domain {
     fn borrow(&self) -> &str {
         &self.0
     }
-}
-
-// impl Borrow<str> for &Domain {
-//     fn borrow(&self) -> &str {
-//         &self.0
-//     }
-// }
-
-fn foo() {
-    let mut map: HashMap<String, String> = HashMap::new();
-    map.insert(String::from("hello"), String::from("world"));
-    let domain = Domain(Arc::from("hello"));
-    let r = map.get(domain.as_str());
 }

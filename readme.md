@@ -51,8 +51,10 @@ key_path = "credentials/testpeer.com-key.pem"
 [[proxy]]
 domain = "RustIsAwsome.com"
 upstream = "127.0.0.10:4000"
-# optional flag
+
+# optional settings
 http2 = true
+rate_limit_enable = false
 
 [[proxy]]
 domain = "GolangIsCoolToo.com"

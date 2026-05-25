@@ -67,7 +67,7 @@ where
 
         // rewrite URI
         // TODO: use origin form when not using hyper client
-        parts.uri = match uri_absolute(&parts, &peer.addr()) {
+        parts.uri = match uri_absolute(&parts, peer.addr()) {
             Ok(uri) => uri,
             Err(e) => {
                 error!(%e, "couldnt create absolute uri");
