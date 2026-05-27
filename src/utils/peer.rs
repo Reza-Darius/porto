@@ -15,7 +15,7 @@ use http::{Uri, Version};
 use hyperlocal::Uri as UdsUri;
 use parking_lot::{Mutex, RwLock};
 use serde::Deserialize;
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 
 use crate::config::{PortoConfig, ServiceConfig};
 
@@ -59,7 +59,7 @@ impl RouteTable {
             }),
         };
 
-        debug!("initialized domains {table}");
+        info!("initialized domains {table}");
         table
     }
 
@@ -78,7 +78,7 @@ impl RouteTable {
 
     /// the caller has to ensure the peer is reachable
     pub fn register_peer(&self, peer: Peer) {
-        debug!(id = %peer.id(), addr = %peer.addr(), "registering peer");
+        debug!(id = %peer.id(), domatin = %peer.name(), addr = %peer.addr(), "registering peer");
 
         self.inner
             .domains
@@ -88,6 +88,8 @@ impl RouteTable {
     }
 
     pub fn evict_peer(&self, id: PeerId) -> Option<Peer> {
+        debug!(%id, "evicting peer");
+
         let peer = self.inner.alive.write().remove(&id)?;
         self.inner.domains.write().remove(peer.name());
         Some(peer)

@@ -7,7 +7,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::anyhow;
 use http::{Request, Response, StatusCode};
 use parking_lot::Mutex;
 use pin_project_lite::pin_project;
@@ -27,6 +26,7 @@ const BUCKET_TIMEOUT: Duration = Duration::from_mins(5);
 #[derive(Clone)]
 pub struct RateLimitLayer {
     inner: Arc<RateLimiterInner>,
+    enabled: bool,
 }
 
 impl<S> Layer<S> for RateLimitLayer {
@@ -37,14 +37,16 @@ impl<S> Layer<S> for RateLimitLayer {
             rl: self.inner.clone(),
             token: None,
             inner,
+            enabled: self.enabled,
         }
     }
 }
 
 impl RateLimitLayer {
-    pub fn new() -> Self {
+    pub fn new(enabled: bool) -> Self {
         RateLimitLayer {
             inner: RateLimiterInner::new(),
+            enabled,
         }
     }
 }
@@ -57,14 +59,16 @@ struct Token;
 pub struct RateLimiter<S> {
     rl: Arc<RateLimiterInner>,
     token: Option<Token>,
+    enabled: bool,
     inner: S,
 }
 
 impl<S> RateLimiter<S> {
-    pub fn new(inner: S) -> Self {
+    pub fn new(inner: S, enabled: bool) -> Self {
         RateLimiter {
             rl: RateLimiterInner::new(),
             token: None,
+            enabled,
             inner,
         }
     }
@@ -180,15 +184,14 @@ where
     }
 
     fn call(&mut self, req: Request<ReqB>) -> Self::Future {
+        if !self.enabled {
+            return RateLimitFuture::Ok {
+                fut: self.inner.call(req),
+            };
+        }
         let Some(addr) = req.extensions().get::<SocketAddr>() else {
             return RateLimitFuture::NoAddrFoun;
         };
-
-        if !req.extensions().get::<Peer>().expect("it needs to be there").config().limit {
-            return RateLimitFuture::Ok {
-                fut: self.inner.call(req),
-            }
-        }
 
         if self.has_token(*addr) {
             RateLimitFuture::Ok {

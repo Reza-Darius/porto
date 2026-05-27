@@ -1,4 +1,6 @@
+[global]
 bind = "127.0.0.1:3000"
+limit = true
 
 [tls]
 tls = true

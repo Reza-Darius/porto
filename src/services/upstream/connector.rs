@@ -4,16 +4,25 @@ use std::task;
 use std::task::Poll;
 
 use hex::FromHex;
+use http::Request;
+use http::Response;
+use http::StatusCode;
 use http::Uri;
 use hyper_util::client::legacy::connect::Connection;
 use hyper_util::rt::TokioIo;
 use pin_project_lite::pin_project;
 use tokio::net::TcpStream;
 use tokio::net::UnixStream;
+use tower::BoxError;
+use tower::Service;
 use tracing::debug;
 use tracing::error;
 
+use crate::utils::Body;
 use crate::utils::PeerAddr;
+use crate::utils::SvcBoxFut;
+use crate::utils::boxfut_err;
+use crate::utils::boxfut_res;
 
 pin_project! {
     #[project = EnumProj]
@@ -189,5 +198,34 @@ impl tower::Service<PeerAddr> for UpstreamConnector {
                 }
             }
         })
+    }
+}
+
+#[derive(Clone)]
+pub struct DebugConnector {
+    should_fail: bool,
+}
+
+impl DebugConnector {
+    pub fn new(should_fail: bool) -> Self {
+        DebugConnector { should_fail }
+    }
+}
+
+impl<B> Service<Request<B>> for DebugConnector {
+    type Response = Response<Body>;
+    type Error = BoxError;
+    type Future = SvcBoxFut<Self::Response, Self::Error>;
+
+    fn poll_ready(&mut self, _: &mut task::Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn call(&mut self, _: Request<B>) -> Self::Future {
+        if self.should_fail {
+            boxfut_err("debug error for connector")
+        } else {
+            boxfut_res(StatusCode::OK)
+        }
     }
 }

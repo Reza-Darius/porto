@@ -4,7 +4,7 @@ use std::task::Poll;
 use http::{Request, Response, StatusCode};
 use pin_project_lite::pin_project;
 use thiserror::Error;
-use tower::{BoxError, Layer, Service};
+use tower::{Layer, Service};
 use tracing::warn;
 
 use crate::utils::ResponseBody;

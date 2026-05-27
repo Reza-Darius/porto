@@ -1,5 +1,7 @@
 use std::{
-    collections::HashSet, net::SocketAddr, path::{Path, PathBuf}
+    collections::HashSet,
+    net::SocketAddr,
+    path::{Path, PathBuf},
 };
 
 use anyhow::{Context, Result, anyhow};
@@ -26,11 +28,26 @@ pub struct Cli {
 
 #[derive(Debug, Deserialize, Default)]
 pub struct PortoConfig {
-    pub bind: Option<SocketAddr>,
+    pub global: GlobalSettings,
     #[serde(default)]
     pub tls: TlsConfig,
     #[serde(default)]
     proxy: Vec<ProxyConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GlobalSettings {
+    pub bind: Option<SocketAddr>,
+    pub limit: bool,
+}
+
+impl Default for GlobalSettings {
+    fn default() -> Self {
+        GlobalSettings {
+            bind: None,
+            limit: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -49,7 +66,7 @@ impl PortoConfig {
     }
 
     pub fn get_addr(&self) -> SocketAddr {
-        self.bind.expect("config parsing fails without an address")
+        self.global.bind.expect("config parsing fails without an address")
     }
 }
 
@@ -145,9 +162,9 @@ pub fn setup_config() -> Result<PortoConfig> {
     let mut config = parse_config_file(path)?;
 
     if let Some(addr) = args.addr {
-        // command line argument overwrites config
-        config.bind = Some(addr);
-    } else if config.bind.is_none() {
+        // command line argument overwrites config file
+        config.global.bind = Some(addr);
+    } else if config.global.bind.is_none() {
         return Err(anyhow!(
             "No listening address provided! Either pass a address as argument or set \"bind = [ADDR]\" inside the config"
         ));
@@ -173,16 +190,14 @@ fn parse_config_file(path: impl AsRef<Path>) -> Result<PortoConfig> {
         ));
     }
 
-    if !check_duplicates(&config.proxy) {
-        return Err(anyhow!(
-            "Config error: duplicate proxy entires"
-        ));
+    if contains_duplicates(&config.proxy) {
+        return Err(anyhow!("Config error: duplicate proxy entires"));
     }
 
     Ok(config)
 }
 
-fn check_duplicates(proxies: &[ProxyConfig]) -> bool {
+fn contains_duplicates(proxies: &[ProxyConfig]) -> bool {
     let mut peers = HashSet::new();
     for proxy in proxies.iter() {
         if !peers.contains(&proxy.domain) {
@@ -200,7 +215,9 @@ mod config_tests {
 
     fn setup_test_conf(path: &Path) {
         let config = r#"
+            [global]
             bind = "127.0.0.1:3000"
+            limit = true
 
             [tls]
             tls = true

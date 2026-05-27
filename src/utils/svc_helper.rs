@@ -106,7 +106,7 @@ impl<B> ResponseBody<B> {
     /// wraps the body, use this if you want to pass the body unaltered
     pub(crate) fn wrap(body: B) -> Self {
         Self {
-            inner: ResponseBodyInner::Body { body },
+            inner: ResponseBodyInner::Wrapped { body },
         }
     }
 }
@@ -118,7 +118,7 @@ pin_project! {
             #[pin]
             body: UnsyncBoxBody<Bytes, BoxError>,
         },
-        Body {
+        Wrapped {
             #[pin]
             body: B
         }
@@ -139,21 +139,21 @@ where
     ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
         match self.project().inner.project() {
             BodyProj::Custom { body } => body.poll_frame(cx),
-            BodyProj::Body { body } => body.poll_frame(cx).map_err(Into::into),
+            BodyProj::Wrapped { body } => body.poll_frame(cx).map_err(Into::into),
         }
     }
 
     fn is_end_stream(&self) -> bool {
         match &self.inner {
             ResponseBodyInner::Custom { body } => body.is_end_stream(),
-            ResponseBodyInner::Body { body } => body.is_end_stream(),
+            ResponseBodyInner::Wrapped { body } => body.is_end_stream(),
         }
     }
 
     fn size_hint(&self) -> SizeHint {
         match &self.inner {
             ResponseBodyInner::Custom { body } => body.size_hint(),
-            ResponseBodyInner::Body { body } => body.size_hint(),
+            ResponseBodyInner::Wrapped { body } => body.size_hint(),
         }
     }
 }

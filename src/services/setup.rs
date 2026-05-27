@@ -14,10 +14,17 @@ use tower_http::{
 use crate::{
     config::PortoConfig,
     services::{
-        HealthServiceConfig, addr::AddrServiceLayer, cache::ResponseCacheLayer, comp::{PeerCompSettings, setup_response_compresson}, ratelimit::RateLimitLayer, req_validation::ReqValidationLayer, setup_health_service, upstream::{
+        HealthEndpoint, HealthServiceConfig,
+        addr::AddrServiceLayer,
+        cache::ResponseCacheLayer,
+        comp::{PeerCompSettings, setup_response_compresson},
+        ratelimit::RateLimitLayer,
+        req_validation::ReqValidationLayer,
+        setup_health_service,
+        upstream::{
             connection_table::{ConnectionConfig, ConnectionService},
             hyper_client,
-        }
+        },
     },
     utils::{HyperService, RouteTable, handle_panic},
 };
@@ -55,7 +62,8 @@ pub fn setup_service4(config: &PortoConfig) -> HyperService {
             Duration::from_secs(20),
         ))
         .layer(CatchPanicLayer::custom(handle_panic))
-        .layer(RateLimitLayer::new())
+        .layer_fn(HealthEndpoint::new)
+        .layer(RateLimitLayer::new(config.global.limit))
         .layer(ReqValidationLayer::new())
         .layer(RequestBodyLimitLayer::new(4096))
         .layer_fn(setup_response_compresson)

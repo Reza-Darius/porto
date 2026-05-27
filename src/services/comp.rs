@@ -12,6 +12,7 @@ pub fn setup_response_compresson<S>(
         .compress_when(DefaultPredicate::new().and(PeerCompSettings))
 }
 
+/// determines compression based on settings per peer
 #[derive(Clone)]
 pub struct PeerCompSettings;
 

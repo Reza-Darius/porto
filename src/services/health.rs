@@ -1,10 +1,12 @@
 #![allow(dead_code, unused_variables)]
 use std::{
     collections::HashMap,
+    task::Poll,
     time::{Duration, Instant},
 };
 
-use http::{Method, Request};
+use http::{Method, Request, Response, StatusCode};
+use pin_project_lite::pin_project;
 use rand::RngExt;
 use tower::Service;
 use tracing::{debug, info, warn};
@@ -251,4 +253,74 @@ fn jittered(base: Duration, percent: f64) -> Duration {
     let factor = rng.random_range((1.0 - percent)..=(1.0 + percent));
 
     base.mul_f64(factor)
+}
+
+#[derive(Clone)]
+pub struct HealthEndpoint<S> {
+    inner: S,
+}
+
+impl<S> HealthEndpoint<S> {
+    pub fn new(inner: S) -> Self {
+        HealthEndpoint { inner }
+    }
+}
+
+impl<S, ReqB, RespB> Service<Request<ReqB>> for HealthEndpoint<S>
+where
+    S: Service<Request<ReqB>, Response = Response<RespB>>,
+    S::Future: Send + 'static,
+{
+    type Response = Response<ResponseBody<RespB>>;
+    type Error = S::Error;
+    type Future = HealthEndpointFuture<S::Future>;
+
+    fn poll_ready(
+        &mut self,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, req: Request<ReqB>) -> Self::Future {
+        if let Some(path) = req.uri().path_and_query()
+            && path.path() == "/health"
+        {
+            HealthEndpointFuture::Ok
+        } else {
+            HealthEndpointFuture::Inner {
+                fut: self.inner.call(req),
+            }
+        }
+    }
+}
+
+pin_project! {
+    #[project = EnumProj]
+    pub enum HealthEndpointFuture<F> {
+        Inner { #[pin] fut: F },
+        Ok,
+    }
+}
+
+impl<F, E, RespB> Future for HealthEndpointFuture<F>
+where
+    F: Future<Output = Result<Response<RespB>, E>>,
+{
+    type Output = Result<Response<ResponseBody<RespB>>, E>;
+
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        match self.project() {
+            EnumProj::Inner { fut } => fut
+                .poll(cx)
+                .map(|res| res.map(|resp| resp.map(ResponseBody::wrap))),
+            EnumProj::Ok => Poll::Ready(Ok(Response::builder()
+                .status(StatusCode::OK)
+                .body(ResponseBody::empty())
+                .expect("the values are hard coded"))),
+        }
+    }
 }
