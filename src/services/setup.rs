@@ -4,11 +4,7 @@ use http_body_util::BodyExt;
 use hyper::StatusCode;
 use tower::{ServiceBuilder, ServiceExt};
 use tower_http::{
-    catch_panic::CatchPanicLayer,
-    compression::{Compression, CompressionLayer, DefaultPredicate, Predicate},
-    limit::RequestBodyLimitLayer,
-    timeout::TimeoutLayer,
-    trace::TraceLayer,
+    catch_panic::CatchPanicLayer, compression::{Compression, CompressionLayer, DefaultPredicate, Predicate}, limit::RequestBodyLimitLayer, normalize_path::NormalizePathLayer, timeout::TimeoutLayer, trace::TraceLayer
 };
 
 use crate::{
@@ -67,6 +63,7 @@ pub fn setup_service4(config: &PortoConfig) -> HyperService {
         .layer(ReqValidationLayer::new())
         .layer(RequestBodyLimitLayer::new(4096))
         .layer_fn(setup_response_compresson)
+        .layer(NormalizePathLayer::trim_trailing_slash())
         .layer(AddrServiceLayer::new(peers))
         .service(ConnectionService::new(ConnectionConfig::default()))
         // using a BoxError breaks the whole thing and i cant figure out why

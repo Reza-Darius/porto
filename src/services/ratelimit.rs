@@ -88,7 +88,7 @@ impl<S> RateLimiter<S> {
                     debug!(tokens = bucket.tokens, "tokens remaining");
                     true
                 } else {
-                    warn!(%addr, "too many requests");
+                    debug!(%addr, "too many requests");
                     false
                 }
             }
