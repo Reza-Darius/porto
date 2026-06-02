@@ -14,9 +14,9 @@ const HEADER_SIZE_LIMIT: u32 = (1 << 10) * 8; // 8 Kb
 
 /// an IP based rate limiter using token buckets
 #[derive(Clone)]
-pub struct ReqValidationLayer;
+pub struct RequestValidationLayer;
 
-impl<S> Layer<S> for ReqValidationLayer {
+impl<S> Layer<S> for RequestValidationLayer {
     type Service = ReqValidation<S>;
 
     fn layer(&self, inner: S) -> Self::Service {
@@ -24,9 +24,9 @@ impl<S> Layer<S> for ReqValidationLayer {
     }
 }
 
-impl ReqValidationLayer {
+impl RequestValidationLayer {
     pub fn new() -> Self {
-        ReqValidationLayer
+        RequestValidationLayer
     }
 }
 

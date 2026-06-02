@@ -41,15 +41,14 @@ where
         let store = self.store.clone();
         let mut svc = svc_clone(&mut self.inner);
 
-        if !req
-            .extensions()
-            .get::<Peer>()
-            .expect("it needs to be there")
-            .config()
-            .cache
-        {
+        let Some(peer) = req.extensions().get::<Peer>() else {
+            return boxfut_err("No Peer Info found on request");
+        };
+
+        if !peer.config().cache {
             return svc.call(req).map_err(Into::into).boxed();
         }
+
         Box::pin(async move {
             let Ok(key) = CacheKey::from_req(&req) else {
                 let e = Box::new(CacheError::CantCreateKey);
@@ -75,7 +74,7 @@ where
                                 .extensions
                                 .get::<Peer>()
                                 .cloned()
-                                .expect("Addr service needs to be called first"),
+                                .ok_or_else(|| BoxError::from("No Peer info found on request".to_string()))?
                         );
 
                         let new_req = Request::from_parts(request.clone(), req_body);

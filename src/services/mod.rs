@@ -8,4 +8,4 @@ mod upstream;
 mod comp;
 
 pub use health::*;
-pub use setup::setup_service4;
+pub use setup::{ setup_service4, setup_service5 };

@@ -23,6 +23,7 @@ pub type SvcBoxFut<R, E> =
     Pin<Box<dyn Future<Output = std::result::Result<R, E>> + Send + 'static>>;
 pub type Body = UnsyncBoxBody<Bytes, BoxError>;
 pub type HyperService = BoxCloneService<Request<Incoming>, Response<Body>, anyhow::Error>;
+pub type HyperService2<RespB> = BoxCloneService<Request<Incoming>, Response<RespB>, BoxError>;
 
 /*
 * Services are permitted to panic if call is invoked without obtaining Poll::Ready(Ok(())) from poll_ready.

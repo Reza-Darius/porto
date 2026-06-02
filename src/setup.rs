@@ -41,7 +41,6 @@ pub fn setup_listener(config: &PortoConfig) -> TcpListener {
     let socket = TcpSocket::new_v4().unwrap();
 
     socket.set_keepalive(true).unwrap();
-    socket.set_reuseaddr(true).unwrap();
     socket.set_nodelay(true).unwrap();
     socket.bind(addr).unwrap();
 

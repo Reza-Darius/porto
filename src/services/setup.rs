@@ -15,14 +15,14 @@ use crate::{
         cache::ResponseCacheLayer,
         comp::{PeerCompSettings, setup_response_compresson},
         ratelimit::RateLimitLayer,
-        req_validation::ReqValidationLayer,
+        req_validation::RequestValidationLayer,
         setup_health_service,
         upstream::{
             connection_table::{ConnectionConfig, ConnectionService},
             hyper_client,
         },
     },
-    utils::{HyperService, RouteTable, handle_panic},
+    utils::{HyperService, HyperService2, RouteTable, handle_panic},
 };
 
 // legacy hyper client implementation
@@ -60,7 +60,7 @@ pub fn setup_service4(config: &PortoConfig) -> HyperService {
         .layer(CatchPanicLayer::custom(handle_panic))
         .layer_fn(HealthEndpoint::new)
         .layer(RateLimitLayer::new(config.global.limit))
-        .layer(ReqValidationLayer::new())
+        .layer(RequestValidationLayer::new())
         .layer(RequestBodyLimitLayer::new(4096))
         .layer_fn(setup_response_compresson)
         .layer(NormalizePathLayer::trim_trailing_slash())
@@ -69,5 +69,29 @@ pub fn setup_service4(config: &PortoConfig) -> HyperService {
         // using a BoxError breaks the whole thing and i cant figure out why
         .map_err(anyhow::Error::from_boxed)
         .map_response(|resp: http::Response<_>| resp.map(|body| body.boxed_unsync()))
+        .boxed_clone()
+}
+
+pub fn setup_service5<B>(config: &PortoConfig) -> HyperService2<impl hyper::body::Body + Send + 'static> 
+{
+    let peers = RouteTable::init(config);
+
+    setup_health_service(HealthServiceConfig::default(), peers.clone());
+
+    ServiceBuilder::new()
+        .layer(TraceLayer::new_for_http())
+        .layer(TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            Duration::from_secs(20),
+        ))
+        .layer(CatchPanicLayer::custom(handle_panic))
+        .layer_fn(HealthEndpoint::new)
+        .layer(RateLimitLayer::new(config.global.limit))
+        .layer(RequestValidationLayer::new())
+        .layer(RequestBodyLimitLayer::new(4096))
+        .layer_fn(setup_response_compresson)
+        .layer(NormalizePathLayer::trim_trailing_slash())
+        .layer(AddrServiceLayer::new(peers))
+        .service(ConnectionService::new(ConnectionConfig::default()))
         .boxed_clone()
 }

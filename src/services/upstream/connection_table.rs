@@ -82,7 +82,7 @@ where
 
     fn call(&mut self, req: Request<B>) -> Self::Future {
         let Some(peer) = req.extensions().get::<Peer>().cloned() else {
-            return boxfut_err("no peer address found on request");
+            return boxfut_err("no Peer info found on request");
         };
         let prot = peer.prot();
         let mut svc = match self.table.lock().entry(peer.addr().clone()) {
