@@ -11,7 +11,7 @@ use serde::Deserialize;
 use tap::Pipe;
 use tracing::{debug, instrument};
 
-use crate::utils::{Domain, Peer, PeerAddr, PeerProto};
+use crate::utils::{Domain, Peer, PeerAddr};
 
 const CONFIG_FILENAME: &str = "porto.toml";
 

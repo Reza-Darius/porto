@@ -1,6 +1,6 @@
 #![allow(clippy::new_without_default)]
 use std::borrow::Borrow;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap};
 use std::fmt::Display;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -15,7 +15,7 @@ use http::{Uri, Version};
 use hyperlocal::Uri as UdsUri;
 use parking_lot::{Mutex, RwLock};
 use serde::Deserialize;
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 
 use crate::config::{PortoConfig, ServiceConfig};
 
@@ -40,8 +40,6 @@ struct RouteTableInner {
     /// list of peers for initialization
     peers: Mutex<Vec<Peer>>,
 }
-
-// TODO: prevent duplicate addresses
 
 impl RouteTable {
     fn new() -> Self {

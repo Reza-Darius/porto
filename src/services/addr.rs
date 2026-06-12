@@ -19,10 +19,9 @@ pub struct AddrService<S> {
     inner: S,
 }
 
-impl<S, B> Service<Request<B>> for AddrService<S>
+impl<S, ReqB> Service<Request<ReqB>> for AddrService<S>
 where
-    S: Service<Request<B>, Response = Response<Body>>,
-    B: hyper::body::Body,
+    S: Service<Request<ReqB>, Response = Response<Body>>,
     S::Error: Into<BoxError>,
 {
     type Response = S::Response;
@@ -36,7 +35,7 @@ where
         self.inner.poll_ready(cx).map_err(Into::into)
     }
 
-    fn call(&mut self, req: Request<B>) -> Self::Future {
+    fn call(&mut self, req: Request<ReqB>) -> Self::Future {
         let (mut parts, body) = req.into_parts();
         debug!(?parts, "rewriting request");
 

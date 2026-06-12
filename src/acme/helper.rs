@@ -3,7 +3,6 @@ use std::{path::Path, sync::Arc};
 use anyhow::{Result, anyhow};
 use rustls::{ServerConfig, server::ResolvesServerCert};
 use tap::Pipe;
-use time::OffsetDateTime;
 use x509_parser::pem::{Pem, parse_x509_pem};
 
 use crate::{config::TlsConfig, setup::setup_tls_from_file, utils::CertChainPem};

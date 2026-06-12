@@ -21,6 +21,12 @@ use tracing::{error, info};
 #[tokio::main]
 async fn main() -> Result<()> {
     setup_tracing();
+    run_test_backends().await;
+
+    Ok(())
+}
+
+pub async fn run_test_backends() {
     let listen_addr = ["127.0.0.2:8000", "127.0.0.3:8000", "/tmp/test_peer.sock"];
     let listen_addr: Vec<_> = listen_addr
         .iter()
@@ -79,8 +85,6 @@ async fn main() -> Result<()> {
         });
     }
     set.join_all().await;
-
-    Ok(())
 }
 
 async fn log_handle(req: Request, mut next: Next) -> impl IntoResponse {
