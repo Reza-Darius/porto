@@ -34,8 +34,8 @@ async fn health_ping() {
 
     let client = get_client();
 
-    for backend in backends.iter() {
-        let res = client.get(format!("https://{}/", backend)).send().await;
-        assert!(res.is_ok());
+    for domain in domains.iter() {
+        let res = client.get(format!("https://{}/", domain)).send().await;
+        eprintln!("{:?}", res.unwrap());
     }
 }

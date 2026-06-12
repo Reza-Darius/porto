@@ -71,4 +71,4 @@ url = "2.5.8"
 x509-parser = { version = "0.18.1", features = ["aws-lc-rs"] }
 
 [profile.release]
-debug = true  # Include debug symbols
+# debug = true  # Include debug symbols
