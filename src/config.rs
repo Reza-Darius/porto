@@ -51,7 +51,7 @@ impl Default for GlobalSettings {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-struct ProxyConfig {
+pub struct ProxyConfig {
     pub domain: Domain,
     pub upstream: PeerAddr,
     #[serde(default)]
@@ -66,7 +66,13 @@ impl PortoConfig {
     }
 
     pub fn get_addr(&self) -> SocketAddr {
-        self.global.bind.expect("config parsing fails without an address")
+        self.global
+            .bind
+            .expect("config parsing fails without an address")
+    }
+
+    pub fn add_proxy(&mut self, proxy: ProxyConfig) {
+        self.proxy.push(proxy);
     }
 }
 
@@ -152,6 +158,7 @@ impl Default for ServiceConfig {
     }
 }
 
+/// parses command line arguments and the porto.toml config file
 #[instrument(err)]
 pub fn setup_config() -> Result<PortoConfig> {
     let args = Cli::parse();

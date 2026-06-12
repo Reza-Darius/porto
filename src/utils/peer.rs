@@ -214,6 +214,10 @@ impl PeerAddr {
         };
         Ok(uri)
     }
+
+    pub fn parse(addr: impl AsRef<str>) -> Result<Self> {
+        addr.as_ref().try_into()
+    }
 }
 
 impl TryFrom<http::Uri> for PeerAddr {

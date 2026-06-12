@@ -9,29 +9,21 @@ use hyper_util::server::graceful::Watcher;
 use hyper_util::{rt::TokioIo, service::TowerToHyperService};
 use std::time::Instant;
 use tap::Pipe;
-use tikv_jemallocator::Jemalloc;
 use tokio::net::TcpStream;
 use tokio::select;
 use tokio_rustls::TlsAcceptor;
 use tower::ServiceExt;
 use tracing::{debug, error, info};
 
-use porto::config::*;
-use porto::services::*;
-use porto::setup::*;
-use porto::utils::*;
+use crate::config::*;
+use crate::services::*;
+use crate::setup::*;
+use crate::utils::*;
 
-#[global_allocator]
-static GLOBAL: Jemalloc = Jemalloc;
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    setup_tracing();
-
-    let config = setup_config()?;
-    let listener = setup_listener(&config);
+pub async fn run(config: &PortoConfig) -> Result<()> {
+    let listener = setup_listener(config);
     let tls_acceptor = setup_tls_from_file(&config.tls)?;
-    let service = setup_service4(&config);
+    let service = setup_service4(config);
 
     let graceful = hyper_util::server::graceful::GracefulShutdown::new();
     let mut signal = std::pin::pin!(shutdown_signal());
