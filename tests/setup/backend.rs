@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use anyhow::Result;
 use axum::{
@@ -13,17 +13,12 @@ use http::StatusCode;
 use http::header::CACHE_CONTROL;
 use hyper::server::conn::http1;
 use hyper_util::{rt::TokioIo, service::TowerToHyperService};
-use porto::utils::PeerAddr;
+use porto::{config::PortoConfig, utils::PeerAddr};
 use tokio::task::JoinSet;
 use tower::Service;
 use tracing::{error, info};
 
-pub async fn run_backends(listen_addr: &[&str]) {
-    let listen_addr: Vec<_> = listen_addr
-        .iter()
-        .map(|addr| PeerAddr::try_from(*addr).unwrap())
-        .collect();
-
+pub async fn run_backends(config: Arc<PortoConfig>) {
     let route = Router::new()
         .route("/", get(echo))
         .route("/cache", get(cache))
@@ -33,10 +28,10 @@ pub async fn run_backends(listen_addr: &[&str]) {
         .layer(middleware::from_fn(log_handle));
 
     let mut set: JoinSet<Result<(), anyhow::Error>> = JoinSet::new();
-    for addr in listen_addr.into_iter() {
+    for peer in config.get_proxies() {
         let route = route.clone();
         set.spawn(async move {
-            match &addr {
+            match peer.addr() {
                 PeerAddr::Ipv4(sock_addr) => {
                     let listener = tokio::net::TcpListener::bind(sock_addr)
                         .await

@@ -65,7 +65,7 @@ impl PortoConfig {
         self.proxy.clone().into_iter().map(Into::into)
     }
 
-    pub fn get_addr(&self) -> SocketAddr {
+    pub fn addr(&self) -> SocketAddr {
         self.global
             .bind
             .expect("config parsing fails without an address")
@@ -255,7 +255,7 @@ mod config_tests {
         assert!(config.tls.enabled);
         assert!(!config.tls.auto_cert);
         assert_eq!(config.proxy.len(), 2);
-        println!("{:?}", config);
+        eprintln!("{:#?}", config);
 
         let _ = std::fs::remove_file(path);
     }

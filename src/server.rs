@@ -21,14 +21,14 @@ use crate::setup::*;
 use crate::utils::*;
 
 pub async fn run(config: &PortoConfig) -> Result<()> {
-    let listener = setup_listener(config);
+    let listener = setup_listener(config)?;
     let tls_acceptor = setup_tls_from_file(&config.tls)?;
     let service = setup_service4(config);
 
     let graceful = hyper_util::server::graceful::GracefulShutdown::new();
     let mut signal = std::pin::pin!(shutdown_signal());
 
-    info!("listening on {}", config.get_addr());
+    info!("listening on {}", config.addr());
 
     loop {
         let tls_acceptor = tls_acceptor.clone();

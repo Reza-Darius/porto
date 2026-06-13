@@ -272,8 +272,18 @@ impl PeerProto {
     }
 }
 
-#[derive(Debug, Clone, Display, Hash, Eq, PartialEq, PartialOrd, Ord, Deserialize)]
+#[derive(Debug, Clone, Display, Hash, Eq, PartialEq, PartialOrd, Ord)]
 pub struct Domain(Arc<str>);
+
+// normalizing deserialization to lowercase
+impl<'de> Deserialize<'de> for Domain {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Domain(Arc::from(s.to_ascii_lowercase())))
+    }
+}
 
 impl Domain {
     pub fn parse(domain: impl AsRef<str>) -> Result<Self> {

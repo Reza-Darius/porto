@@ -13,8 +13,12 @@ use crate::config::{PortoConfig, TlsConfig};
 #[tracing::instrument(err, skip_all)]
 pub fn setup_tls_from_file(config: &TlsConfig) -> Result<TlsAcceptor> {
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
-    let certs = config.cert_path.as_ref().unwrap();
-    let key = config.key_path.as_ref().unwrap();
+    let certs = config
+        .cert_path
+        .as_ref()
+        .ok_or_else(|| anyhow!("cert path error"))?;
+    let key = config.key_path.as_ref()
+        .ok_or_else(|| anyhow!("cert key error"))?;
 
     // Load public certificate.
     let certs = CertificateDer::pem_file_iter(certs)?
@@ -36,13 +40,14 @@ pub fn setup_tls_from_file(config: &TlsConfig) -> Result<TlsAcceptor> {
     Ok(TlsAcceptor::from(Arc::new(server_config)))
 }
 
-pub fn setup_listener(config: &PortoConfig) -> TcpListener {
-    let addr = config.get_addr();
+pub fn setup_listener(config: &PortoConfig) -> Result<TcpListener> {
+    let addr = config.addr();
     let socket = TcpSocket::new_v4().unwrap();
 
-    socket.set_keepalive(true).unwrap();
-    socket.set_nodelay(true).unwrap();
-    socket.bind(addr).unwrap();
+    socket.set_keepalive(true)?;
+    socket.set_nodelay(true)?;
+    socket.set_reuseaddr(true)?;
+    socket.bind(addr)?;
 
-    socket.listen(4096).unwrap()
+    Ok(socket.listen(4096)?)
 }

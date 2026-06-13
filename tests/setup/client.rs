@@ -25,7 +25,7 @@ impl Resolve for TestResolver {
                 let b: Box<dyn Iterator<Item = SocketAddr> + Send + 'static> = Box::new(iter);
                 b
             })
-            .ok_or_else(|| anyhow!("couldnt resolve domain").into_boxed_dyn_error());
+            .ok_or_else(|| anyhow!("couldnt resolve domain: {name:?}").into_boxed_dyn_error());
         Box::pin(async move { addr })
     }
 }
