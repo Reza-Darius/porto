@@ -4,7 +4,7 @@ use anyhow::anyhow;
 use axum::BoxError;
 use reqwest::{ClientBuilder, dns::Resolve};
 
-/// provided address names resolve to proxy addr
+/// provided a client that resolves every domain to the proxy adress
 pub fn get_client(domains: &[&'static str], proxy_addr: SocketAddr) -> reqwest::Client {
     let resolver = TestResolver {
         proxy: proxy_addr,
