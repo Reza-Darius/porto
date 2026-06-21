@@ -103,22 +103,3 @@ impl Future for UpstreamResponseFuture {
     }
 }
 
-struct Foo<F> {
-    fut: F,
-}
-
-impl<F> Future for Foo<F>
-where
-    F: Future<Output = ()> + Unpin,
-{
-    type Output = ();
-
-    fn poll(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Self::Output> {
-        let this = self.get_mut();
-
-        std::pin::Pin::new(&mut this.fut).poll(cx)
-    }
-}

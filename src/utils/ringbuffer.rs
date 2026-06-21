@@ -81,7 +81,7 @@ impl<T> Queue<T> {
         }
 
         // SAFETY:
-        // tail always follows head so data is never uninitialized and
+        // tail always follows head so data is never uninitialized
         let elem = unsafe { self.data[i].assume_init_ref() };
 
         Some(elem)

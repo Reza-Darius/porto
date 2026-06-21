@@ -1,6 +1,6 @@
 #![allow(clippy::new_without_default)]
 use std::borrow::Borrow;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap};
 use std::fmt::Display;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -15,7 +15,7 @@ use http::{Uri, Version};
 use hyperlocal::Uri as UdsUri;
 use parking_lot::{Mutex, RwLock};
 use serde::Deserialize;
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 
 use crate::config::{PortoConfig, ServiceConfig};
 
@@ -40,8 +40,6 @@ struct RouteTableInner {
     /// list of peers for initialization
     peers: Mutex<Vec<Peer>>,
 }
-
-// TODO: prevent duplicate addresses
 
 impl RouteTable {
     fn new() -> Self {
@@ -216,6 +214,10 @@ impl PeerAddr {
         };
         Ok(uri)
     }
+
+    pub fn parse(addr: impl AsRef<str>) -> Result<Self> {
+        addr.as_ref().try_into()
+    }
 }
 
 impl TryFrom<http::Uri> for PeerAddr {
@@ -270,8 +272,18 @@ impl PeerProto {
     }
 }
 
-#[derive(Debug, Clone, Display, Hash, Eq, PartialEq, PartialOrd, Ord, Deserialize)]
+#[derive(Debug, Clone, Display, Hash, Eq, PartialEq, PartialOrd, Ord)]
 pub struct Domain(Arc<str>);
+
+// normalizing deserialization to lowercase
+impl<'de> Deserialize<'de> for Domain {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Domain(Arc::from(s.to_ascii_lowercase())))
+    }
+}
 
 impl Domain {
     pub fn parse(domain: impl AsRef<str>) -> Result<Self> {

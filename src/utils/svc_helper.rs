@@ -21,6 +21,7 @@ use tower::util::BoxCloneService;
 /// convenience type suitable for Futures returned by by Service impls
 pub type SvcBoxFut<R, E> =
     Pin<Box<dyn Future<Output = std::result::Result<R, E>> + Send + 'static>>;
+// OPTIMIZE: replace body with the wrapper body type
 pub type Body = UnsyncBoxBody<Bytes, BoxError>;
 pub type HyperService = BoxCloneService<Request<Incoming>, Response<Body>, anyhow::Error>;
 

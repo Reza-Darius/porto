@@ -251,12 +251,12 @@ mod tests {
     use hyper_util::rt::TokioIo;
     use hyper_util::service::TowerToHyperService;
     use tokio::io::AsyncWriteExt;
-    use tracing_subscriber::EnvFilter;
+    use test_log::test;
 
     use super::*;
     use challenge::*;
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn acme_test() -> Result<()> {
         /*
         HOW TO TEST:
@@ -265,13 +265,6 @@ mod tests {
         - curl with: curl --http1.1 --resolve acmetest.com:5002:127.0.0.1 https://acmetest.com:5002 -k -v
 
         */
-        tracing_subscriber::fmt()
-            .with_env_filter(
-                EnvFilter::try_from_default_env()
-                    .or_else(|_| EnvFilter::try_new("proxy=error,tower_http=warn"))?,
-            )
-            .init();
-
         let tls_config = TlsConfig {
             debug: true,
             credentials: Some(PathBuf::from("credentials")),

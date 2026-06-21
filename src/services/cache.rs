@@ -36,6 +36,7 @@ where
     ) -> std::task::Poll<Result<(), Self::Error>> {
         self.inner.poll_ready(cx).map_err(Into::into)
     }
+
     #[allow(clippy::needless_return)]
     fn call(&mut self, req: Request<B>) -> Self::Future {
         let store = self.store.clone();

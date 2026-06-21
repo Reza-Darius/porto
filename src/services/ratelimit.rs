@@ -13,7 +13,7 @@ use pin_project_lite::pin_project;
 use tower::{BoxError, Layer, Service};
 use tracing::{debug, warn};
 
-use crate::utils::{Peer, ResponseBody};
+use crate::utils::ResponseBody;
 
 const BUCKET_SIZE: u16 = 10;
 const REFILL_INTERVAL: Duration = Duration::from_mins(1);

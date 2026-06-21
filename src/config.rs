@@ -11,7 +11,7 @@ use serde::Deserialize;
 use tap::Pipe;
 use tracing::{debug, instrument};
 
-use crate::utils::{Domain, Peer, PeerAddr, PeerProto};
+use crate::utils::{Domain, Peer, PeerAddr};
 
 const CONFIG_FILENAME: &str = "porto.toml";
 
@@ -51,7 +51,7 @@ impl Default for GlobalSettings {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-struct ProxyConfig {
+pub struct ProxyConfig {
     pub domain: Domain,
     pub upstream: PeerAddr,
     #[serde(default)]
@@ -65,8 +65,14 @@ impl PortoConfig {
         self.proxy.clone().into_iter().map(Into::into)
     }
 
-    pub fn get_addr(&self) -> SocketAddr {
-        self.global.bind.expect("config parsing fails without an address")
+    pub fn addr(&self) -> SocketAddr {
+        self.global
+            .bind
+            .expect("config parsing fails without an address")
+    }
+
+    pub fn add_proxy(&mut self, proxy: ProxyConfig) {
+        self.proxy.push(proxy);
     }
 }
 
@@ -152,6 +158,7 @@ impl Default for ServiceConfig {
     }
 }
 
+/// parses command line arguments and the porto.toml config file
 #[instrument(err)]
 pub fn setup_config() -> Result<PortoConfig> {
     let args = Cli::parse();
@@ -248,7 +255,7 @@ mod config_tests {
         assert!(config.tls.enabled);
         assert!(!config.tls.auto_cert);
         assert_eq!(config.proxy.len(), 2);
-        println!("{:?}", config);
+        eprintln!("{:#?}", config);
 
         let _ = std::fs::remove_file(path);
     }
