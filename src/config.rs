@@ -11,20 +11,10 @@ use serde::Deserialize;
 use tap::Pipe;
 use tracing::{debug, instrument};
 
-use crate::utils::{Domain, Peer, PeerAddr};
+use crate::{cli::Cli, utils::{Domain, Peer, PeerAddr}};
 
 const CONFIG_FILENAME: &str = "porto.toml";
 
-#[derive(Parser)]
-#[command(version, about, long_about = None)]
-pub struct Cli {
-    /// Addr and port for Porto to listen on, overrides config
-    addr: Option<SocketAddr>,
-
-    /// Sets path to the porto.toml config file.
-    #[arg(short, long, value_name = "FILE")]
-    config: Option<PathBuf>,
-}
 
 #[derive(Debug, Deserialize, Default)]
 pub struct PortoConfig {
