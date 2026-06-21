@@ -3,6 +3,7 @@ name = "porto"
 version = "0.1.0"
 edition = "2024"
 default-run = "server"
+description = "a fast hassle free reverse proxy"
 
 [[bin]]
 name = "server"
@@ -17,7 +18,7 @@ serde = { version = "1.0.228", features = ["derive", "rc"] }
 serde_json = "1.0.149"
 tokio = { version = "1.50.0", features = ["full"] }
 tower = { version = "0.5.3", features = ["limit", "util"] }
-tower-http = { version = "0.6.8", features = [
+tower-http = { version = "0.7.0", features = [
   "catch-panic",
   "compression-gzip",
   "fs",
@@ -63,12 +64,10 @@ time = "0.3.47"
 tokio-rustls = "0.26.4"
 tokio-util = { version = "0.7.18", features = ["time"] }
 toml = { version = "1.1.2", features = ["serde"] }
-tower_governor = { version = "0.8.0", default-features = false, features = [
-  "axum",
-  "tracing",
-] }
 url = "2.5.8"
 x509-parser = { version = "0.18.1", features = ["aws-lc-rs"] }
 
+[dev-dependencies]
+test-log = {version = "0.2", features = ["trace"]}
 [profile.release]
 # debug = true  # Include debug symbols
