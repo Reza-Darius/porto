@@ -2,10 +2,14 @@ use std::{convert::Infallible, env::temp_dir, path::Path};
 
 use anyhow::{Result, anyhow};
 use http::Method;
-use hyper::body::Incoming;
+use hyper::{body::Incoming};
+use hyper_util::rt::TokioIo;
 use reqwest::{Request, Response};
-use tokio::net::{UnixDatagram, UnixListener};
-use tracing::debug;
+use tokio::{
+    net::{UnixDatagram, UnixListener},
+    sync::mpsc::Receiver,
+};
+use tracing::{debug, error};
 use url::Url;
 
 use crate::utils::SvcBoxFut;
@@ -13,15 +17,32 @@ use crate::utils::SvcBoxFut;
 const NOTIFY_SOCKET: &str = "NOTIFY_SOCKET";
 const CTRL_SOCK_PATH: &str = "/tmp/porto-ctrl.sock";
 
-pub fn setup_ctrl_sock() -> Result<UnixListener> {
+/// sets up the ctrl socket for the server in the background
+pub fn setup_ctrl_sock() -> Result<Receiver<CtrlMsg>> {
     let path = Path::new(CTRL_SOCK_PATH);
     if path.exists() {
         std::fs::remove_file(path)?;
     }
-    UnixListener::bind(Path::new(path)).map_err(Into::into)
+    let socket = UnixListener::bind(Path::new(path))?;
+
+    let (ctrl_tx, ctrl_rx) = tokio::sync::mpsc::channel::<CtrlMsg>(1024);
+
+    tokio::spawn(async move {
+        let svc = CtrlService::new(ctrl_tx);
+        while let Ok((stream, _)) = socket.accept().await {
+            let conn = hyper::server::conn::http1::Builder::new()
+                .serve_connection(TokioIo::new(stream), svc.clone());
+
+            if let Err(e) = conn.await {
+                error!("server connection error: {}", e);
+            }
+        }
+    });
+    Ok(ctrl_rx)
 }
 
-pub async fn send_ctrl_msg(ctrl: CtrlMsg) -> Result<Response> {
+/// sends a ctrl message to the ctrl socket, should be used from the CLI client
+async fn send_ctrl_msg(ctrl: CtrlMsg) -> Result<Response> {
     let client = reqwest::ClientBuilder::new()
         .unix_socket(CTRL_SOCK_PATH)
         .http1_only()
@@ -40,7 +61,7 @@ pub enum CtrlMsg {
 impl CtrlMsg {
     const BASE_URL: &str = "http://porto.ctrl";
 
-    pub fn into_req(self) -> Request {
+    pub fn into_req(self) -> reqwest::Request {
         match self {
             Self::Stop => {
                 let url = format!("{}/stop", Self::BASE_URL);
@@ -53,7 +74,7 @@ impl CtrlMsg {
         }
     }
 
-    pub fn from_resp(resp: &Response) -> Self {
+    pub fn from_resp(resp: &reqwest::Response) -> Self {
         match resp.url().path() {
             "/stop" => Self::Stop,
             _ => unimplemented!(),
@@ -135,19 +156,10 @@ impl hyper::service::Service<http::Request<Incoming>> for CtrlService {
 
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
+    use std::time::Duration;
 
     use super::*;
-    use hyper::body::Incoming;
-    use hyper_util::rt::TokioIo;
     use test_log::test;
-    use tokio::sync::Notify;
-    use tracing::{debug, error};
-
-    async fn handler(req: http::Request<Incoming>) -> Result<http::Response<String>> {
-        debug!("got request {:?}", req.uri());
-        Ok(http::Response::new("got ctrl message".to_string()))
-    }
 
     #[test]
     fn url() {
@@ -158,28 +170,13 @@ mod test {
 
     #[test(tokio::test)]
     async fn ctrl_snd_rcv() {
-        let srv_rdy = Arc::new(Notify::new());
-        let srv_clone = srv_rdy.clone();
+        let mut rx = setup_ctrl_sock().unwrap();
 
-        tokio::spawn(async move {
-            let listener = setup_ctrl_sock().unwrap();
-            srv_clone.notify_one();
+        tokio::time::sleep(Duration::from_secs(2)).await;
 
-            let stream = listener.accept().await.unwrap();
-
-            let conn = hyper::server::conn::http1::Builder::new()
-                .serve_connection(TokioIo::new(stream.0), hyper::service::service_fn(handler));
-
-            if let Err(e) = conn.await {
-                error!("server connection error: {}", e);
-            }
-        });
-
-        srv_rdy.notified().await;
-
-        let msg = CtrlMsg::Stop;
-        let res = send_ctrl_msg(msg).await.unwrap();
-
+        let res = send_ctrl_msg(CtrlMsg::Stop).await.unwrap();
+        let rx_resp = rx.recv().await.unwrap();
+        assert_eq!(rx_resp, CtrlMsg::Stop);
         let ctr = CtrlMsg::from_resp(&res);
         assert_eq!(ctr, CtrlMsg::Stop);
     }

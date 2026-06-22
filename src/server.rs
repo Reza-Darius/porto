@@ -17,13 +17,13 @@ use tower::ServiceExt;
 use tracing::{debug, error, info};
 
 use crate::config::*;
-use crate::ctrl::{CtrlMsg, CtrlService, setup_ctrl_sock};
+use crate::ctrl::{CtrlMsg, setup_ctrl_sock};
 use crate::services::*;
 use crate::setup::*;
 use crate::utils::*;
 
 pub async fn run(config: &PortoConfig) -> Result<()> {
-    let ctrl_sock = setup_ctrl_sock()?;
+    let mut ctrl_rx = setup_ctrl_sock()?;
     let listener = setup_listener(config)?;
     let tls_acceptor = setup_tls_from_file(&config.tls)?;
     let service = setup_service4(config);
@@ -32,14 +32,10 @@ pub async fn run(config: &PortoConfig) -> Result<()> {
 
     info!("listening on {}", config.addr());
 
-    let (ctrl_tx, mut ctrl_rx) = tokio::sync::mpsc::channel::<CtrlMsg>(1024);
-    let ctrl_svc = CtrlService::new(ctrl_tx);
-
     loop {
         let tls_acceptor = tls_acceptor.clone();
         let watcher = graceful.watcher();
         let service = service.clone();
-        let ctrl_svc_clone = ctrl_svc.clone();
 
         select! {
             Ok((tcp_stream, remote_addr)) = listener.accept() => {
@@ -52,40 +48,34 @@ pub async fn run(config: &PortoConfig) -> Result<()> {
                 });
             }
 
-            Ok((ctrl_stream, _)) = ctrl_sock.accept() => {
-                tokio::spawn(async move {
-                    let conn = hyper::server::conn::http1::Builder::new()
-                        .serve_connection(TokioIo::new(ctrl_stream), ctrl_svc_clone);
-
-                    if let Err(e) = conn.await {
-                        error!("server connection error: {}", e);
-                    }
-                });
-            }
-
-            ctrl_msg = ctrl_rx.recv() => {
-            // TODO
+            Some(ctrl_msg) = ctrl_rx.recv() => {
+                match ctrl_msg {
+                   CtrlMsg::Stop => break,
+                    _ => unimplemented!(),
+                }
             }
 
             sig_res = tokio::signal::ctrl_c() => {
                 if sig_res.is_err() {
                     panic!("unexpected signal error")
                 }
-                drop(listener);
-                info!("shutting down server");
                 break;
             }
         }
     }
 
+    info!("shutting down server...");
+    drop(listener);
+
     select! {
         _ = graceful.shutdown() => {
-            info!("all connections closed");
+            debug!("all connections closed");
         },
         _ = tokio::time::sleep(std::time::Duration::from_secs(10)) => {
-            info!("timed out wait for all connections to close");
+            debug!("timed out wait for all connections to close");
         }
     }
+    info!("goodbye!");
     Ok(())
 }
 
@@ -152,3 +142,5 @@ async fn handle_http(stream: TcpStream, addr: SocketAddr, service: HyperService,
     };
     debug!("stream closed");
 }
+
+async fn msg_handler(msg: CtrlMsg) {}
