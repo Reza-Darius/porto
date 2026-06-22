@@ -2,7 +2,7 @@ use std::{convert::Infallible, env::temp_dir, path::Path};
 
 use anyhow::{Result, anyhow};
 use http::Method;
-use hyper::{body::Incoming};
+use hyper::body::Incoming;
 use hyper_util::rt::TokioIo;
 use reqwest::{Request, Response};
 use tokio::{
@@ -42,7 +42,7 @@ pub fn setup_ctrl_sock() -> Result<Receiver<CtrlMsg>> {
 }
 
 /// sends a ctrl message to the ctrl socket, should be used from the CLI client
-async fn send_ctrl_msg(ctrl: CtrlMsg) -> Result<Response> {
+pub async fn send_ctrl_msg(ctrl: CtrlMsg) -> Result<Response> {
     let client = reqwest::ClientBuilder::new()
         .unix_socket(CTRL_SOCK_PATH)
         .http1_only()
@@ -55,7 +55,6 @@ async fn send_ctrl_msg(ctrl: CtrlMsg) -> Result<Response> {
 pub enum CtrlMsg {
     Status,
     Stop,
-    Ready,
 }
 
 impl CtrlMsg {
@@ -70,7 +69,13 @@ impl CtrlMsg {
                     Url::parse(&url).expect("the values are hard coded"),
                 )
             }
-            _ => unimplemented!(),
+            CtrlMsg::Status => {
+                let url = format!("{}/status", Self::BASE_URL);
+                Request::new(
+                    Method::POST,
+                    Url::parse(&url).expect("the values are hard coded"),
+                )
+            }
         }
     }
 
@@ -80,12 +85,11 @@ impl CtrlMsg {
             _ => unimplemented!(),
         }
     }
-
-    pub fn ready() -> Self {
-        Self::Ready
-    }
 }
+
 /*
+    sends are atomic, we only need a new line delimter for multiple commands in one send
+
     READY=1\n                          # "I'm up and ready to serve"
     STOPPING=1\n                       # "I'm shutting down intentionally"
     WATCHDOG=1\n                       # "I'm still alive" (keepalive)
@@ -97,8 +101,7 @@ impl CtrlMsg {
 async fn send_notify(msg: CtrlMsg) -> Result<()> {
     let msg = match msg {
         CtrlMsg::Stop => "STOPPING=1",
-        CtrlMsg::Status => todo!(),
-        CtrlMsg::Ready => "READY=1",
+        CtrlMsg::Status => return Ok(()),
     };
 
     let Some(socket_path) = std::env::var_os(NOTIFY_SOCKET) else {
@@ -119,7 +122,7 @@ async fn send_notify(msg: CtrlMsg) -> Result<()> {
 }
 
 #[derive(Debug, Clone)]
-pub struct CtrlService {
+struct CtrlService {
     sender: tokio::sync::mpsc::Sender<CtrlMsg>,
 }
 
@@ -139,10 +142,18 @@ impl hyper::service::Service<http::Request<Incoming>> for CtrlService {
         Box::pin(async move {
             let ctrl = match req.uri().path() {
                 "/stop" => CtrlMsg::Stop,
-                _ => unimplemented!(),
+                "/status" => CtrlMsg::Status,
+                invalid => {
+                    error!("unknown ctrl message received {invalid}");
+
+                    return Ok(axum::response::Response::builder()
+                        .status(200)
+                        .body(axum::body::Body::empty())
+                        .unwrap());
+                }
             };
 
-            debug!("received ctrl message {ctrl:?}");
+            debug!("received ctrl message: {ctrl:?}");
 
             sender.send(ctrl).await.expect("this cant fail");
 

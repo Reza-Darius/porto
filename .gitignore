@@ -9,3 +9,4 @@ pebble/
 example_cert.pem
 example_key.pem
 debug.log
+config-folder/

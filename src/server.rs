@@ -32,6 +32,8 @@ pub async fn run(config: &PortoConfig) -> Result<()> {
 
     info!("listening on {}", config.addr());
 
+    // TODO: Send systemd notif here?
+    
     loop {
         let tls_acceptor = tls_acceptor.clone();
         let watcher = graceful.watcher();
@@ -50,8 +52,13 @@ pub async fn run(config: &PortoConfig) -> Result<()> {
 
             Some(ctrl_msg) = ctrl_rx.recv() => {
                 match ctrl_msg {
-                   CtrlMsg::Stop => break,
-                    _ => unimplemented!(),
+                    CtrlMsg::Stop => {
+                        // TODO: send a systemd notification here
+                        break
+                    },
+                    // TODO: make something nice here
+                    // the service should probably hold a stat struct or something and send it out
+                    CtrlMsg::Status => {},
                 }
             }
 

@@ -2,11 +2,11 @@
 name = "porto"
 version = "0.1.0"
 edition = "2024"
-default-run = "server"
+default-run = "porto"
 description = "a fast hassle free reverse proxy"
 
 [[bin]]
-name = "server"
+name = "porto"
 path = "src/bin/porto.rs"
 
 [[bin]]

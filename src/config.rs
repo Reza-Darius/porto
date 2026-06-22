@@ -1,5 +1,6 @@
 use std::{
     collections::HashSet,
+    fs,
     net::SocketAddr,
     path::{Path, PathBuf},
 };
@@ -9,7 +10,7 @@ use clap::Parser;
 use http::Version;
 use serde::Deserialize;
 use tap::Pipe;
-use tracing::{debug, instrument};
+use tracing::{debug, error, field::debug, instrument};
 
 use crate::{
     cli::{Cli, RunArgs},
@@ -154,11 +155,17 @@ impl Default for ServiceConfig {
 #[instrument(err)]
 pub fn setup_config(cli_args: Option<&RunArgs>) -> Result<PortoConfig> {
     if let Some(cli) = cli_args {
-        let path = cli
-            .config
-            .as_ref()
-            .cloned()
-            .unwrap_or_else(|| PathBuf::from(CONFIG_FILENAME));
+        let path = if let Some(ref p) = cli.config {
+            if p.is_dir() {
+                search_directory(p).ok_or_else(|| {
+                    anyhow!("no porto.toml config found in directory: {}", p.display())
+                })?
+            } else {
+                p.clone()
+            }
+        } else {
+            PathBuf::from(CONFIG_FILENAME)
+        };
 
         let mut config = parse_config_file(path)?;
 
@@ -174,7 +181,27 @@ pub fn setup_config(cli_args: Option<&RunArgs>) -> Result<PortoConfig> {
     } else {
         parse_config_file(PathBuf::from(CONFIG_FILENAME))
     }
+}
 
+fn search_directory<'a>(path: impl AsRef<Path> + 'a) -> Option<PathBuf> {
+    let path = path.as_ref();
+    let iter = fs::read_dir(path)
+        .inspect_err(|e| {
+            error!(
+                "directory iterator error {e} when searching for config for path {}",
+                path.display()
+            )
+        })
+        .ok()?;
+
+    for entry in iter {
+        let e = entry.inspect_err(|e| error!("entry error {e}")).ok()?;
+        if e.file_name() == CONFIG_FILENAME {
+            debug!("found config in directory");
+            return Some(e.path());
+        }
+    }
+    None
 }
 
 fn parse_config_file(path: impl AsRef<Path>) -> Result<PortoConfig> {

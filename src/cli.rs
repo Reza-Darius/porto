@@ -7,7 +7,7 @@ use clap::{Args, Parser, Subcommand};
 #[command(propagate_version = true)]
 pub struct Cli {
     #[command(subcommand)]
-    command: ServerCtrl,
+    pub command: ServerCtrl,
 }
 
 #[derive(Subcommand)]
@@ -16,6 +16,8 @@ pub enum ServerCtrl {
     Run(RunArgs),
     /// stops a running proxy
     Stop,
+    /// retrieve the status of a running Porto proxy
+    Status,
 }
 
 #[derive(Args, Debug)]
@@ -30,8 +32,4 @@ pub struct RunArgs {
     /// runs the server in the background
     #[arg(short, default_value_t = false)]
     pub background: bool,
-}
-
-pub fn run_stop() {
-
 }
