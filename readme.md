@@ -9,6 +9,7 @@ a simple but fast reverse proxy with TLS termination
 - HTTPS support with rustls
 - ACME support for automatic certificate renewal
 - CLI and config file parsing with clap
+- HTTP based control interface
 - Response caching according to RFC 7234
 - Response compression
 - Health checks
@@ -18,6 +19,7 @@ a simple but fast reverse proxy with TLS termination
 
 - Load Balancing
 - Notifications/Metrics
+- SystemD integration
 
 ## Hello World
 
@@ -26,9 +28,18 @@ build it with cargo
 ```
 git clone https://github.com/Reza-Darius/porto
 cargo build
+porto run 127.0.0.1:4000
 ```
 
-By default, porto looks for a `porto.toml` in the current working directory. An alternate location can be provided by passing `--config "path/porto.toml"`
+By default, porto looks for a `porto.toml` in the current working directory. Alternative a location can be provided by passing `-c path/to/config`
+
+## CLI
+
+```
+porto run - starts the porto proxy
+porto stop - shuts down a running porto server
+porto status - fetches information about a running porto server
+```
 
 ## Config
 
