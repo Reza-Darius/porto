@@ -6,4 +6,5 @@ pub mod setup;
 pub mod utils;
 pub mod server;
 pub mod cli;
+pub mod ctrl;
 
