@@ -244,9 +244,6 @@ async fn acme_worker(store: PortoTLS, mode: AcmeWorkerMode) {
 
 #[cfg(test)]
 mod tests {
-
-    use std::default;
-
     use hyper::server::conn::http1::Builder;
     use hyper_util::rt::TokioIo;
     use hyper_util::service::TowerToHyperService;

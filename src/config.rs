@@ -1,5 +1,6 @@
 use std::{
     collections::HashSet,
+    fs,
     net::SocketAddr,
     path::{Path, PathBuf},
 };
@@ -9,22 +10,14 @@ use clap::Parser;
 use http::Version;
 use serde::Deserialize;
 use tap::Pipe;
-use tracing::{debug, instrument};
+use tracing::{debug, error, field::debug, instrument};
 
-use crate::utils::{Domain, Peer, PeerAddr};
+use crate::{
+    cli::{Cli, RunArgs},
+    utils::{Domain, Peer, PeerAddr},
+};
 
 const CONFIG_FILENAME: &str = "porto.toml";
-
-#[derive(Parser)]
-#[command(version, about, long_about = None)]
-pub struct Cli {
-    /// Addr and port for Porto to listen on, overrides config
-    addr: Option<SocketAddr>,
-
-    /// Sets path to the porto.toml config file.
-    #[arg(short, long, value_name = "FILE")]
-    config: Option<PathBuf>,
-}
 
 #[derive(Debug, Deserialize, Default)]
 pub struct PortoConfig {
@@ -160,24 +153,55 @@ impl Default for ServiceConfig {
 
 /// parses command line arguments and the porto.toml config file
 #[instrument(err)]
-pub fn setup_config() -> Result<PortoConfig> {
-    let args = Cli::parse();
-    let path = args
-        .config
-        .unwrap_or_else(|| PathBuf::from(CONFIG_FILENAME));
+pub fn setup_config(cli_args: Option<&RunArgs>) -> Result<PortoConfig> {
+    if let Some(cli) = cli_args {
+        let path = if let Some(ref p) = cli.config {
+            if p.is_dir() {
+                search_directory(p).ok_or_else(|| {
+                    anyhow!("no porto.toml config found in directory: {}", p.display())
+                })?
+            } else {
+                p.clone()
+            }
+        } else {
+            PathBuf::from(CONFIG_FILENAME)
+        };
 
-    let mut config = parse_config_file(path)?;
+        let mut config = parse_config_file(path)?;
 
-    if let Some(addr) = args.addr {
         // command line argument overwrites config file
-        config.global.bind = Some(addr);
-    } else if config.global.bind.is_none() {
-        return Err(anyhow!(
-            "No listening address provided! Either pass a address as argument or set \"bind = [ADDR]\" inside the config"
-        ));
-    }
+        config.global.bind = cli.addr;
 
-    Ok(config)
+        if config.global.bind.is_none() {
+            return Err(anyhow!(
+                "No listening address provided! Either pass a address as argument or set \"bind = [ADDR]\" inside the config"
+            ));
+        }
+        Ok(config)
+    } else {
+        parse_config_file(PathBuf::from(CONFIG_FILENAME))
+    }
+}
+
+fn search_directory<'a>(path: impl AsRef<Path> + 'a) -> Option<PathBuf> {
+    let path = path.as_ref();
+    let iter = fs::read_dir(path)
+        .inspect_err(|e| {
+            error!(
+                "directory iterator error {e} when searching for config for path {}",
+                path.display()
+            )
+        })
+        .ok()?;
+
+    for entry in iter {
+        let e = entry.inspect_err(|e| error!("entry error {e}")).ok()?;
+        if e.file_name() == CONFIG_FILENAME {
+            debug!("found config in directory");
+            return Some(e.path());
+        }
+    }
+    None
 }
 
 fn parse_config_file(path: impl AsRef<Path>) -> Result<PortoConfig> {

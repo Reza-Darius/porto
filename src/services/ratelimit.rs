@@ -29,6 +29,15 @@ pub struct RateLimitLayer {
     enabled: bool,
 }
 
+impl RateLimitLayer {
+    pub fn new(enabled: bool) -> Self {
+        RateLimitLayer {
+            inner: RateLimiterInner::new(),
+            enabled,
+        }
+    }
+}
+
 impl<S> Layer<S> for RateLimitLayer {
     type Service = RateLimiter<S>;
 
@@ -38,15 +47,6 @@ impl<S> Layer<S> for RateLimitLayer {
             token: None,
             inner,
             enabled: self.enabled,
-        }
-    }
-}
-
-impl RateLimitLayer {
-    pub fn new(enabled: bool) -> Self {
-        RateLimitLayer {
-            inner: RateLimiterInner::new(),
-            enabled,
         }
     }
 }

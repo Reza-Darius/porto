@@ -19,6 +19,28 @@ pub struct AddrService<S> {
     inner: S,
 }
 
+#[derive(Debug, Clone)]
+pub struct AddrServiceLayer {
+    table: RouteTable,
+}
+
+impl AddrServiceLayer {
+    pub fn new(table: RouteTable) -> Self {
+        AddrServiceLayer { table }
+    }
+}
+
+impl<S> tower::Layer<S> for AddrServiceLayer {
+    type Service = AddrService<S>;
+
+    fn layer(&self, inner: S) -> Self::Service {
+        AddrService {
+            inner,
+            table: self.table.clone(),
+        }
+    }
+}
+
 impl<S, ReqB> Service<Request<ReqB>> for AddrService<S>
 where
     S: Service<Request<ReqB>, Response = Response<Body>>,
@@ -131,24 +153,3 @@ where
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct AddrServiceLayer {
-    table: RouteTable,
-}
-
-impl AddrServiceLayer {
-    pub fn new(table: RouteTable) -> Self {
-        AddrServiceLayer { table }
-    }
-}
-
-impl<S> tower::Layer<S> for AddrServiceLayer {
-    type Service = AddrService<S>;
-
-    fn layer(&self, inner: S) -> Self::Service {
-        AddrService {
-            inner,
-            table: self.table.clone(),
-        }
-    }
-}

@@ -1,5 +1,6 @@
 use std::io::ErrorKind;
 use std::net::SocketAddr;
+use std::sync;
 
 use anyhow::Result;
 use hyper::Request;
@@ -16,20 +17,23 @@ use tower::ServiceExt;
 use tracing::{debug, error, info};
 
 use crate::config::*;
+use crate::ctrl::{CtrlMsg, setup_ctrl_sock};
 use crate::services::*;
 use crate::setup::*;
 use crate::utils::*;
 
 pub async fn run(config: &PortoConfig) -> Result<()> {
+    let mut ctrl_rx = setup_ctrl_sock()?;
     let listener = setup_listener(config)?;
     let tls_acceptor = setup_tls_from_file(&config.tls)?;
     let service = setup_service4(config);
 
     let graceful = hyper_util::server::graceful::GracefulShutdown::new();
-    let mut signal = std::pin::pin!(shutdown_signal());
 
     info!("listening on {}", config.addr());
 
+    // TODO: Send systemd notif here?
+    
     loop {
         let tls_acceptor = tls_acceptor.clone();
         let watcher = graceful.watcher();
@@ -45,22 +49,40 @@ pub async fn run(config: &PortoConfig) -> Result<()> {
                     }
                 });
             }
-            _ = &mut signal => {
-                drop(listener);
-                info!("shutting down server");
+
+            Some(ctrl_msg) = ctrl_rx.recv() => {
+                match ctrl_msg {
+                    CtrlMsg::Stop => {
+                        // TODO: send a systemd notification here
+                        break
+                    },
+                    // TODO: make something nice here
+                    // the service should probably hold a stat struct or something and send it out
+                    CtrlMsg::Status => {},
+                }
+            }
+
+            sig_res = tokio::signal::ctrl_c() => {
+                if sig_res.is_err() {
+                    panic!("unexpected signal error")
+                }
                 break;
             }
         }
     }
 
+    info!("shutting down server...");
+    drop(listener);
+
     select! {
         _ = graceful.shutdown() => {
-            info!("all connections closed");
+            debug!("all connections closed");
         },
         _ = tokio::time::sleep(std::time::Duration::from_secs(10)) => {
-            info!("timed out wait for all connections to close");
+            debug!("timed out wait for all connections to close");
         }
     }
+    info!("goodbye!");
     Ok(())
 }
 
@@ -127,3 +149,5 @@ async fn handle_http(stream: TcpStream, addr: SocketAddr, service: HyperService,
     };
     debug!("stream closed");
 }
+
+async fn msg_handler(msg: CtrlMsg) {}
