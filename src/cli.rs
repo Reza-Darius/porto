@@ -12,11 +12,11 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum ServerCtrl {
-    /// starts the Porto proxy
+    /// Starts the Porto proxy
     Run(RunArgs),
-    /// stops a running proxy
+    /// Stops a running proxy
     Stop,
-    /// retrieve the status of a running Porto proxy
+    /// Retrieve the status of a running Porto proxy
     Status,
 }
 
@@ -26,10 +26,10 @@ pub struct RunArgs {
     pub addr: Option<SocketAddr>,
 
     /// Sets path to the porto.toml config file.
-    #[arg(short, long, value_name = "FILE")]
+    #[arg(short, long, value_name = "PATH")]
     pub config: Option<PathBuf>,
 
-    /// runs the server in the background
+    /// Starts the server in the background
     #[arg(short, default_value_t = false)]
     pub background: bool,
 }

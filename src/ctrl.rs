@@ -72,7 +72,7 @@ impl CtrlMsg {
             CtrlMsg::Status => {
                 let url = format!("{}/status", Self::BASE_URL);
                 Request::new(
-                    Method::POST,
+                    Method::GET,
                     Url::parse(&url).expect("the values are hard coded"),
                 )
             }
