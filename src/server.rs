@@ -14,14 +14,15 @@ use tokio::net::TcpStream;
 use tokio::select;
 use tokio_rustls::TlsAcceptor;
 use tower::ServiceExt;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, instrument, warn};
 
 use crate::config::*;
-use crate::ctrl::{CtrlMsg, setup_ctrl_sock};
+use crate::ctrl::{CtrlMsg, send_notify, setup_ctrl_sock};
 use crate::services::*;
 use crate::setup::*;
 use crate::utils::*;
 
+#[instrument(skip_all)]
 pub async fn run(config: &PortoConfig) -> Result<()> {
     let mut ctrl_rx = setup_ctrl_sock()?;
     let listener = setup_listener(config)?;
@@ -32,8 +33,8 @@ pub async fn run(config: &PortoConfig) -> Result<()> {
 
     info!("listening on {}", config.addr());
 
-    // TODO: Send systemd notif here?
-    
+    send_notify(CtrlMsg::Ready).await?;
+
     loop {
         let tls_acceptor = tls_acceptor.clone();
         let watcher = graceful.watcher();
@@ -59,6 +60,9 @@ pub async fn run(config: &PortoConfig) -> Result<()> {
                     // TODO: make something nice here
                     // the service should probably hold a stat struct or something and send it out
                     CtrlMsg::Status => {},
+                    CtrlMsg::Ready => {
+                        warn!("Ready message received");
+                    }
                 }
             }
 
@@ -82,6 +86,7 @@ pub async fn run(config: &PortoConfig) -> Result<()> {
             debug!("timed out wait for all connections to close");
         }
     }
+    send_notify(CtrlMsg::Stop).await?;
     info!("goodbye!");
     Ok(())
 }
@@ -149,5 +154,3 @@ async fn handle_http(stream: TcpStream, addr: SocketAddr, service: HyperService,
     };
     debug!("stream closed");
 }
-
-async fn msg_handler(msg: CtrlMsg) {}

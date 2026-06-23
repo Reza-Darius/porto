@@ -5,10 +5,10 @@ use porto::cli::ServerCtrl;
 use porto::ctrl::CtrlMsg;
 use porto::ctrl::send_ctrl_msg;
 use porto::server::run;
+use porto::setup::setup_tracing;
 use tikv_jemallocator::Jemalloc;
 
 use porto::config::*;
-use porto::utils::*;
 
 #[global_allocator]
 static GLOBAL: Jemalloc = Jemalloc;
@@ -19,7 +19,7 @@ async fn main() -> Result<()> {
     setup_tracing();
 
     match cli.command {
-        ServerCtrl::Run(run_args) => {
+        ServerCtrl::Start(run_args) => {
             let config = setup_config(Some(&run_args))?;
             run(&config).await?;
         }
@@ -27,6 +27,8 @@ async fn main() -> Result<()> {
             let res = send_ctrl_msg(CtrlMsg::Stop).await;
             if res.is_ok() {
                 println!("shutdown signal sent")
+            } else {
+                eprintln!("error when sending: {:?}", res)
             }
         },
         ServerCtrl::Status => {

@@ -10,6 +10,14 @@ use tokio_rustls::TlsAcceptor;
 
 use crate::config::{PortoConfig, TlsConfig};
 
+pub fn setup_tracing() {
+    // tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_target(false)
+        .init();
+}
+
 #[tracing::instrument(err, skip_all)]
 pub fn setup_tls_from_file(config: &TlsConfig) -> Result<TlsAcceptor> {
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();

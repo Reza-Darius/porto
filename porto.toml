@@ -5,8 +5,8 @@ limit = true
 [tls]
 tls = true
 auto_cert = false
-cert_path = "credentials/testpeer.com+3.pem"
-key_path = "credentials/testpeer.com+3-key.pem"
+cert_path = "/home/darius/Projects/porto/credentials/testpeer.com+3.pem"
+key_path = "/home/darius/Projects/porto/credentials/testpeer.com+3-key.pem"
 
 [[proxy]]
 domain = "testpeer.com"

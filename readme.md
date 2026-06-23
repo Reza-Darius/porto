@@ -28,7 +28,7 @@ build it with cargo
 ```
 git clone https://github.com/Reza-Darius/porto
 cargo build
-porto run 127.0.0.1:4000
+porto start 127.0.0.1:4000
 ```
 
 By default, porto looks for a `porto.toml` in the current working directory. Alternative a location can be provided by passing `-c path/to/config`
