@@ -28,7 +28,7 @@ async fn main() -> Result<()> {
         ServerCtrl::Stop => {
             if let Err(e) = send_ctrl_msg(CtrlMsg::Stop).await {
                 error!("{:#}", e);
-                return Err(anyhow!("unable to send ctrl message"))
+                return Err(anyhow!("unable to send ctrl message, to shut down porto run: systemctl stop porto"))
             };
             println!("shutdown signal sent! Check \"systemctl status porto\" for confirmation")
         }

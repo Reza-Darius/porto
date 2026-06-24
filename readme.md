@@ -14,12 +14,12 @@ a simple but fast reverse proxy with TLS termination
 - Response compression
 - Health checks
 - Custom rate limiter using a token bucket
+- systemd interation
 
 ## WIP
 
 - Load Balancing
 - Notifications/Metrics
-- SystemD integration
 
 ## Hello World
 
