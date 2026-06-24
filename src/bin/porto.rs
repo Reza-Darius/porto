@@ -1,4 +1,5 @@
 use anyhow::Result;
+use anyhow::anyhow;
 use clap::Parser;
 use porto::cli::Cli;
 use porto::cli::ServerCtrl;
@@ -27,9 +28,9 @@ async fn main() -> Result<()> {
         ServerCtrl::Stop => {
             if let Err(e) = send_ctrl_msg(CtrlMsg::Stop).await {
                 error!("{:#}", e);
-                std::process::exit(-1);
+                return Err(anyhow!("unable to send ctrl message"))
             };
-            println!("shutdown signal sent")
+            println!("shutdown signal sent! Check \"systemctl status porto\" for confirmation")
         }
         ServerCtrl::Status => {
             let res = send_ctrl_msg(CtrlMsg::Status).await;
