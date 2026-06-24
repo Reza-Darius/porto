@@ -6,17 +6,17 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow};
-use clap::Parser;
 use http::Version;
 use serde::Deserialize;
 use tap::Pipe;
-use tracing::{debug, error, field::debug, instrument};
+use tracing::{debug, error, info, instrument, warn};
 
 use crate::{
-    cli::{Cli, RunArgs},
+    cli::RunArgs,
     utils::{Domain, Peer, PeerAddr},
 };
 
+const PORTO_CONFIG_ENV: &str = "PORTO_CONFIG";
 const CONFIG_FILENAME: &str = "porto.toml";
 
 #[derive(Debug, Deserialize, Default)]
@@ -155,22 +155,14 @@ impl Default for ServiceConfig {
 #[instrument(err)]
 pub fn setup_config(cli_args: Option<&RunArgs>) -> Result<PortoConfig> {
     if let Some(cli) = cli_args {
-        let path = if let Some(ref p) = cli.config {
-            if p.is_dir() {
-                search_directory(p).ok_or_else(|| {
-                    anyhow!("no porto.toml config found in directory: {}", p.display())
-                })?
-            } else {
-                p.clone()
-            }
-        } else {
-            PathBuf::from(CONFIG_FILENAME)
-        };
+        let path = search_config_path(cli.config.as_deref())?;
 
         let mut config = parse_config_file(path)?;
 
-        // command line argument overwrites config file
-        config.global.bind = cli.addr;
+        // cli overwrites config
+        if let Some(addr) = cli.addr {
+            config.global.bind = Some(addr);
+        }
 
         if config.global.bind.is_none() {
             return Err(anyhow!(
@@ -179,11 +171,38 @@ pub fn setup_config(cli_args: Option<&RunArgs>) -> Result<PortoConfig> {
         }
         Ok(config)
     } else {
-        parse_config_file(PathBuf::from(CONFIG_FILENAME))
+        let path = search_config_path(None)?;
+        parse_config_file(path)
     }
 }
 
-fn search_directory<'a>(path: impl AsRef<Path> + 'a) -> Option<PathBuf> {
+fn search_config_path(cli_path: Option<&Path>) -> Result<PathBuf> {
+    // validate cli argument
+    if let Some(p) = cli_path {
+        if !p.exists() {
+            return Err(anyhow!("provided path {} does not exist", p.display()));
+        }
+        if p.is_dir() {
+            return search_directory(p).ok_or_else(|| {
+                anyhow!("no porto.toml config found in directory: {}", p.display())
+            });
+        }
+        if p.file_name().expect("we checked if its a dir") == CONFIG_FILENAME {
+            return Ok(p.to_owned());
+        }
+        return Err(anyhow!("provided path {} is not valid", p.display()));
+    }
+
+    let env_val = std::env::var(PORTO_CONFIG_ENV);
+
+    // fallback to CWD
+    Ok(PathBuf::from(env_val.unwrap_or_else(|_| {
+        warn!("no PORTO_CONFIG env variable set, searching cwd...");
+        CONFIG_FILENAME.to_owned()
+    })))
+}
+
+fn search_directory(path: impl AsRef<Path>) -> Option<PathBuf> {
     let path = path.as_ref();
     let iter = fs::read_dir(path)
         .inspect_err(|e| {
@@ -205,7 +224,6 @@ fn search_directory<'a>(path: impl AsRef<Path> + 'a) -> Option<PathBuf> {
 }
 
 fn parse_config_file(path: impl AsRef<Path>) -> Result<PortoConfig> {
-    debug!("loading config from \"{}\"", path.as_ref().display());
     let path = path.as_ref();
 
     let mut config: PortoConfig = path
@@ -225,6 +243,7 @@ fn parse_config_file(path: impl AsRef<Path>) -> Result<PortoConfig> {
         return Err(anyhow!("Config error: duplicate proxy entires"));
     }
 
+    info!("config loaded from {}", path.display());
     Ok(config)
 }
 

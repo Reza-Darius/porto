@@ -3,12 +3,21 @@ use rustls::{
     ServerConfig,
     pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
 };
+use tracing::instrument;
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpSocket};
 
 use tokio_rustls::TlsAcceptor;
 
 use crate::config::{PortoConfig, TlsConfig};
+
+pub fn setup_tracing() {
+    // tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_target(false)
+        .init();
+}
 
 #[tracing::instrument(err, skip_all)]
 pub fn setup_tls_from_file(config: &TlsConfig) -> Result<TlsAcceptor> {
@@ -40,6 +49,7 @@ pub fn setup_tls_from_file(config: &TlsConfig) -> Result<TlsAcceptor> {
     Ok(TlsAcceptor::from(Arc::new(server_config)))
 }
 
+#[instrument(err, skip_all)]
 pub fn setup_listener(config: &PortoConfig) -> Result<TcpListener> {
     let addr = config.addr();
     let socket = TcpSocket::new_v4().unwrap();

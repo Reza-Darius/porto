@@ -1,6 +1,6 @@
-use std::{convert::Infallible, env::temp_dir, path::Path};
+use std::{convert::Infallible, fmt::format, fs::Permissions, os::unix::fs::PermissionsExt, path::Path};
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use http::Method;
 use hyper::body::Incoming;
 use hyper_util::rt::TokioIo;
@@ -9,26 +9,38 @@ use tokio::{
     net::{UnixDatagram, UnixListener},
     sync::mpsc::Receiver,
 };
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 use url::Url;
 
 use crate::utils::SvcBoxFut;
 
 const NOTIFY_SOCKET: &str = "NOTIFY_SOCKET";
-const CTRL_SOCK_PATH: &str = "/tmp/porto-ctrl.sock";
+const CTRL_SOCK_PATH: &str = "/run/porto/ctrl.sock";
 
 /// sets up the ctrl socket for the server in the background
 pub fn setup_ctrl_sock() -> Result<Receiver<CtrlMsg>> {
     let path = Path::new(CTRL_SOCK_PATH);
     if path.exists() {
-        std::fs::remove_file(path)?;
+        std::fs::remove_file(path)
+            .with_context(|| format!("ctrl socket remove file error at {}", path.display()))?;
     }
-    let socket = UnixListener::bind(Path::new(path))?;
+    let socket = UnixListener::bind(path)
+        .with_context(|| format!("ctrl socket bind error at {}", path.display()))?;
+
+    std::fs::set_permissions(path, Permissions::from_mode(0o660)).with_context(|| {
+        format!(
+            "failed to set permissions on ctrl socket at {}",
+            path.display()
+        )
+    })?;
 
     let (ctrl_tx, ctrl_rx) = tokio::sync::mpsc::channel::<CtrlMsg>(1024);
 
     tokio::spawn(async move {
         let svc = CtrlService::new(ctrl_tx);
+
+        info!("listening on ctrl socket: {}", path.display());
+
         while let Ok((stream, _)) = socket.accept().await {
             let conn = hyper::server::conn::http1::Builder::new()
                 .serve_connection(TokioIo::new(stream), svc.clone());
@@ -38,6 +50,7 @@ pub fn setup_ctrl_sock() -> Result<Receiver<CtrlMsg>> {
             }
         }
     });
+
     Ok(ctrl_rx)
 }
 
@@ -46,13 +59,18 @@ pub async fn send_ctrl_msg(ctrl: CtrlMsg) -> Result<Response> {
     let client = reqwest::ClientBuilder::new()
         .unix_socket(CTRL_SOCK_PATH)
         .http1_only()
-        .build()?;
+        .build()
+        .with_context(|| "ctrl client build fail")?;
 
-    client.execute(ctrl.into_req()).await.map_err(Into::into)
+    client
+        .execute(ctrl.into_req())
+        .await
+        .with_context(|| "failed to send request")
 }
 
 #[derive(Debug, PartialEq)]
 pub enum CtrlMsg {
+    Ready,
     Status,
     Stop,
 }
@@ -76,6 +94,9 @@ impl CtrlMsg {
                     Url::parse(&url).expect("the values are hard coded"),
                 )
             }
+            CtrlMsg::Ready => {
+                unreachable!("Ready has no HTTP response")
+            }
         }
     }
 
@@ -97,10 +118,11 @@ impl CtrlMsg {
     RELOADING=1\nMONOTONIC_USEC=...\n # "I'm reloading" (systemd 253+)
 */
 
-/// sends a notify to systemd
-async fn send_notify(msg: CtrlMsg) -> Result<()> {
+/// sends a notification to systemd
+pub async fn send_notify(msg: CtrlMsg) -> Result<()> {
     let msg = match msg {
         CtrlMsg::Stop => "STOPPING=1",
+        CtrlMsg::Ready => "READY=1",
         CtrlMsg::Status => return Ok(()),
     };
 
@@ -109,10 +131,11 @@ async fn send_notify(msg: CtrlMsg) -> Result<()> {
         return Ok(());
     };
 
-    let tmp = temp_dir();
-
-    let socket = UnixDatagram::bind(tmp.join("notify_sender"))?;
-    let nbytes = socket.send_to(msg.as_bytes(), socket_path).await?;
+    let sock = UnixDatagram::unbound()
+        .with_context(|| "failed to bind datagram socket for send notify")?;
+    sock.connect(&socket_path)
+        .with_context(|| format!("failed to connect to {}", socket_path.display()))?;
+    let nbytes = sock.send(msg.as_bytes()).await?;
 
     if nbytes != msg.len() {
         return Err(anyhow!("incomplete sd notify send"));

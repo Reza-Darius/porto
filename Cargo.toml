@@ -10,7 +10,7 @@ name = "porto"
 path = "src/bin/porto.rs"
 
 [[bin]]
-name = "test_peers"
+name = "peer"
 path = "src/bin/test_peer.rs"
 
 [dependencies]

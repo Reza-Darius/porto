@@ -13,7 +13,7 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum ServerCtrl {
     /// Starts the Porto proxy
-    Run(RunArgs),
+    Start(RunArgs),
     /// Stops a running proxy
     Stop,
     /// Retrieve the status of a running Porto proxy
@@ -33,3 +33,5 @@ pub struct RunArgs {
     #[arg(short, default_value_t = false)]
     pub background: bool,
 }
+
+

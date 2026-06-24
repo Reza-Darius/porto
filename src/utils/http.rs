@@ -18,13 +18,6 @@ struct UdsConnectInfo {
     peer_cred: UCred,
 }
 
-pub fn setup_tracing() {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .with_target(false)
-        .init();
-}
-
 /// helper function to build a response
 pub fn response(status: StatusCode) -> Response<Body> {
     Response::builder()

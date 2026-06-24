@@ -13,7 +13,7 @@ use http::StatusCode;
 use http::header::CACHE_CONTROL;
 use hyper::server::conn::http1;
 use hyper_util::{rt::TokioIo, service::TowerToHyperService};
-use porto::utils::{PeerAddr, setup_tracing};
+use porto::{setup::setup_tracing, utils::PeerAddr};
 use tokio::task::JoinSet;
 use tower::Service;
 use tracing::{error, info};
