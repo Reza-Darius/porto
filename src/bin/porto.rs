@@ -9,6 +9,7 @@ use porto::setup::setup_tracing;
 use tikv_jemallocator::Jemalloc;
 
 use porto::config::*;
+use tracing::error;
 
 #[global_allocator]
 static GLOBAL: Jemalloc = Jemalloc;
@@ -24,19 +25,18 @@ async fn main() -> Result<()> {
             run(&config).await?;
         }
         ServerCtrl::Stop => {
-            let res = send_ctrl_msg(CtrlMsg::Stop).await;
-            if res.is_ok() {
-                println!("shutdown signal sent")
-            } else {
-                eprintln!("error when sending: {:?}", res)
-            }
-        },
+            if let Err(e) = send_ctrl_msg(CtrlMsg::Stop).await {
+                error!("{:#}", e);
+                std::process::exit(-1);
+            };
+            println!("shutdown signal sent")
+        }
         ServerCtrl::Status => {
             let res = send_ctrl_msg(CtrlMsg::Status).await;
             if res.is_ok() {
                 println!("server is running!")
             }
-        },
+        }
     }
     Ok(())
 }

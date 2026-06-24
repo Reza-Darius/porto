@@ -1,4 +1,4 @@
-use std::{convert::Infallible, path::Path};
+use std::{convert::Infallible, fmt::format, fs::Permissions, os::unix::fs::PermissionsExt, path::Path};
 
 use anyhow::{Context, Result, anyhow};
 use http::Method;
@@ -15,7 +15,7 @@ use url::Url;
 use crate::utils::SvcBoxFut;
 
 const NOTIFY_SOCKET: &str = "NOTIFY_SOCKET";
-const CTRL_SOCK_PATH: &str = "/tmp/porto-ctrl.sock";
+const CTRL_SOCK_PATH: &str = "/run/porto/ctrl.sock";
 
 /// sets up the ctrl socket for the server in the background
 pub fn setup_ctrl_sock() -> Result<Receiver<CtrlMsg>> {
@@ -24,8 +24,15 @@ pub fn setup_ctrl_sock() -> Result<Receiver<CtrlMsg>> {
         std::fs::remove_file(path)
             .with_context(|| format!("ctrl socket remove file error at {}", path.display()))?;
     }
-    let socket = UnixListener::bind(Path::new(path))
+    let socket = UnixListener::bind(path)
         .with_context(|| format!("ctrl socket bind error at {}", path.display()))?;
+
+    std::fs::set_permissions(path, Permissions::from_mode(0o660)).with_context(|| {
+        format!(
+            "failed to set permissions on ctrl socket at {}",
+            path.display()
+        )
+    })?;
 
     let (ctrl_tx, ctrl_rx) = tokio::sync::mpsc::channel::<CtrlMsg>(1024);
 
