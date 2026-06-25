@@ -28,7 +28,7 @@ a simple but fast reverse proxy with TLS termination
 This is the recommended way for most users
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Reza-Darius/porto/refs/heads/main/scripts/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Reza-Darius/porto/main/scripts/install.sh | sudo bash
 ```
 
 ### From source
