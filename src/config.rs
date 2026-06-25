@@ -3,6 +3,7 @@ use std::{
     fs,
     net::SocketAddr,
     path::{Path, PathBuf},
+    process::Command,
 };
 
 use anyhow::{Context, Result, anyhow};
@@ -261,12 +262,20 @@ fn contains_duplicates(proxies: &[ProxyConfig]) -> bool {
     false
 }
 
-
-
 pub fn open_config_editor(path: impl AsRef<Path>) -> Result<()> {
     let path = path.as_ref();
-    todo!()
+    if !path.exists() {
+        // TODO: if the file doesnt exist, prompt the user for creating one
+        return Err(anyhow!("no config file found"));
+    }
 
+    let status = Command::new("sudoedit").arg(path).status()?;
+
+    if !status.success() {
+        return Err(anyhow!("failed to open editor"));
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

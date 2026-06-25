@@ -42,6 +42,8 @@ async fn main() -> Result<()> {
             let res = send_ctrl_msg(CtrlMsg::Status).await;
             if res.is_ok() {
                 println!("server is running!")
+            } else {
+                return Err(anyhow!("server failed to respond"));
             }
         }
         ServerCtrl::Remove => {
@@ -52,7 +54,7 @@ async fn main() -> Result<()> {
         ServerCtrl::Config => {
             let path: PathBuf = [CONFIG_FOLDER, CONFIG_FILENAME].iter().collect();
             open_config_editor(path)?;
-        },
+        }
     }
     Ok(())
 }
