@@ -1,0 +1,21 @@
+on:
+  push:
+    branches:
+      - main  # triggers on every push to main, no tags needed
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Update rolling release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: latest
+          name: Latest
+          files: target/release/porto
+          prerelease: true  # common convention for rolling releases
