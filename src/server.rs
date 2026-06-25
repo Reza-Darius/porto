@@ -1,6 +1,5 @@
 use std::io::ErrorKind;
 use std::net::SocketAddr;
-use std::sync;
 
 use anyhow::Result;
 use hyper::Request;
@@ -24,7 +23,7 @@ use crate::utils::*;
 
 #[instrument(skip_all)]
 pub async fn run(config: &PortoConfig) -> Result<()> {
-    let mut ctrl_rx = setup_ctrl_sock()?;
+    let mut ctrl_rx = setup_ctrl_sock(CTRL_SOCK_PATH)?;
     let listener = setup_listener(config)?;
     let tls_acceptor = setup_tls_from_file(&config.tls)?;
     let service = setup_service4(config);
@@ -54,7 +53,6 @@ pub async fn run(config: &PortoConfig) -> Result<()> {
             Some(ctrl_msg) = ctrl_rx.recv() => {
                 match ctrl_msg {
                     CtrlMsg::Stop => {
-                        // TODO: send a systemd notification here
                         break
                     },
                     // TODO: make something nice here

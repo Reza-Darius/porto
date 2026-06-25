@@ -18,20 +18,20 @@ use url::Url;
 use crate::utils::SvcBoxFut;
 
 const NOTIFY_SOCKET: &str = "NOTIFY_SOCKET";
-const CTRL_SOCK_PATH: &str = "/run/porto/ctrl.sock";
+pub const CTRL_SOCK_PATH: &str = "/run/porto/ctrl.sock";
 pub const UNINSTALL_SCRIPT_URL: &str = "https://raw.githubusercontent.com/Reza-Darius/porto/main/scripts/uninstall.sh";
 
 /// sets up the ctrl socket for the server in the background
-pub fn setup_ctrl_sock() -> Result<Receiver<CtrlMsg>> {
-    let path = Path::new(CTRL_SOCK_PATH);
+pub fn setup_ctrl_sock(path: impl AsRef<Path>) -> Result<Receiver<CtrlMsg>> {
+    let path = path.as_ref().to_owned();
     if path.exists() {
-        std::fs::remove_file(path)
+        std::fs::remove_file(&path)
             .with_context(|| format!("ctrl socket remove file error at {}", path.display()))?;
     }
-    let socket = UnixListener::bind(path)
+    let socket = UnixListener::bind(&path)
         .with_context(|| format!("ctrl socket bind error at {}", path.display()))?;
 
-    std::fs::set_permissions(path, Permissions::from_mode(0o660)).with_context(|| {
+    std::fs::set_permissions(&path, Permissions::from_mode(0o660)).with_context(|| {
         format!(
             "failed to set permissions on ctrl socket at {}",
             path.display()
@@ -59,9 +59,9 @@ pub fn setup_ctrl_sock() -> Result<Receiver<CtrlMsg>> {
 }
 
 /// sends a ctrl message to the ctrl socket, should be used from the CLI client
-pub async fn send_ctrl_msg(ctrl: CtrlMsg) -> Result<Response> {
+pub async fn send_ctrl_msg(ctrl: CtrlMsg, socket_path: impl AsRef<Path>) -> Result<Response> {
     let client = reqwest::ClientBuilder::new()
-        .unix_socket(CTRL_SOCK_PATH)
+        .unix_socket(socket_path.as_ref())
         .http1_only()
         .build()
         .with_context(|| "ctrl client build fail")?;
@@ -230,11 +230,12 @@ mod test {
 
     #[test(tokio::test)]
     async fn ctrl_snd_rcv() {
-        let mut rx = setup_ctrl_sock().unwrap();
+        let path = "/tmp/porto-test.sock";
+        let mut rx = setup_ctrl_sock(path).unwrap();
 
         tokio::time::sleep(Duration::from_secs(2)).await;
 
-        let res = send_ctrl_msg(CtrlMsg::Stop).await.unwrap();
+        let res = send_ctrl_msg(CtrlMsg::Stop, path).await.unwrap();
         let rx_resp = rx.recv().await.unwrap();
         assert_eq!(rx_resp, CtrlMsg::Stop);
         let ctr = CtrlMsg::from_resp(&res);

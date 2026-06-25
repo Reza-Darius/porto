@@ -183,8 +183,6 @@ impl Peer {
     }
 }
 
-// TODO: Change to Arc<Path> maybe?
-
 #[derive(Debug, Clone, Deserialize, Hash, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(untagged)]
 pub enum PeerAddr {

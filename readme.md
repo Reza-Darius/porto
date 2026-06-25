@@ -1,6 +1,6 @@
-# porto
+# Porto
 
-a simple but fast reverse proxy with TLS termination
+An easy to use and fast reverse proxy with TLS termination!
 
 ## Features
 
@@ -14,7 +14,7 @@ a simple but fast reverse proxy with TLS termination
 - Response compression
 - Health checks
 - Custom rate limiter using a token bucket
-- Systemd interation
+- Systemd integration
 
 ## WIP
 
@@ -52,13 +52,13 @@ sudo systemctl enable --now porto
 ## Config file details
 
 ```toml
-# address for porto to listen on
+# address for Porto to listen on
 bind = "127.0.0.1:3000"
 
 [tls]
 tls = true
 
-# enables ACME for automatic certificates, make sure porto is allowed to bind to port 80
+# enables ACME for automatic certificates, make sure Porto is allowed to bind to port 80
 auto_cert = false
 
 # if TLS is enabled, and ACME disabled, you need to provide paths for certificates
@@ -79,3 +79,6 @@ rate_limit_enable = false
 domain = "GolangIsCoolToo.com"
 upstream = "/tmp/website.sock"
 ```
+
+With this configuration Porto serves HTTPS requests arriving on localhost:3000
+and proxies them according to the domain in the request.

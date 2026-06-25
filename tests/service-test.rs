@@ -14,7 +14,7 @@ use crate::common::*;
 */
 
 #[test(tokio::test)]
-async fn health_ping() {
+async fn proxying() {
     let domains = &["testpeer.com", "testpeeruds.com", "rezadarius.de"];
     let backends = &["127.0.0.2:8000", "127.0.0.3:8000", "/tmp/test_peer.sock"];
 
@@ -28,3 +28,7 @@ async fn health_ping() {
         client.get(format!("https://{}/", domain)).send().await.expect("the backend is available and should respond");
     }
 }
+
+// TODO: tests:
+// - rate limiting
+// - response compression

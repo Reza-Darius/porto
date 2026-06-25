@@ -5,6 +5,7 @@ use anyhow::anyhow;
 use clap::Parser;
 use porto::cli::Cli;
 use porto::cli::ServerCtrl;
+use porto::ctrl::CTRL_SOCK_PATH;
 use porto::ctrl::CtrlMsg;
 use porto::ctrl::UNINSTALL_SCRIPT_URL;
 use porto::ctrl::execute_remote_bash;
@@ -30,7 +31,7 @@ async fn main() -> Result<()> {
             run(&config).await?;
         }
         ServerCtrl::Stop => {
-            if let Err(e) = send_ctrl_msg(CtrlMsg::Stop).await {
+            if let Err(e) = send_ctrl_msg(CtrlMsg::Stop, CTRL_SOCK_PATH).await {
                 error!("{:#}", e);
                 return Err(anyhow!(
                     "unable to send ctrl message, to shut down porto run: systemctl stop porto"
@@ -39,7 +40,7 @@ async fn main() -> Result<()> {
             println!("shutdown signal sent! Check \"systemctl status porto\" for confirmation")
         }
         ServerCtrl::Status => {
-            let res = send_ctrl_msg(CtrlMsg::Status).await;
+            let res = send_ctrl_msg(CtrlMsg::Status, CTRL_SOCK_PATH).await;
             if res.is_ok() {
                 println!("server is running!")
             } else {
