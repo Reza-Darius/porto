@@ -12,12 +12,16 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum ServerCtrl {
-    /// Starts the Porto proxy
+    /// Starts the Porto proxy, it's generally recommended to start the proxy via "systemctl start porto"
     Start(RunArgs),
     /// Stops a running proxy
     Stop,
     /// Retrieve the status of a running Porto proxy
     Status,
+    /// uninstalls porto
+    Remove,
+    /// opens the config file for editing, uses the editor from the $EDITOR env variable
+    Config,
 }
 
 #[derive(Args, Debug)]

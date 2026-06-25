@@ -1,4 +1,7 @@
-use std::{convert::Infallible, fmt::format, fs::Permissions, os::unix::fs::PermissionsExt, path::Path};
+use std::{
+    convert::Infallible, fmt::format, fs::Permissions, os::unix::fs::PermissionsExt, path::Path,
+    process::Command,
+};
 
 use anyhow::{Context, Result, anyhow};
 use http::Method;
@@ -16,6 +19,7 @@ use crate::utils::SvcBoxFut;
 
 const NOTIFY_SOCKET: &str = "NOTIFY_SOCKET";
 const CTRL_SOCK_PATH: &str = "/run/porto/ctrl.sock";
+pub const UNINSTALL_SCRIPT_URL: &str = "https://raw.githubusercontent.com/Reza-Darius/porto/main/scripts/uninstall.sh";
 
 /// sets up the ctrl socket for the server in the background
 pub fn setup_ctrl_sock() -> Result<Receiver<CtrlMsg>> {
@@ -188,6 +192,28 @@ impl hyper::service::Service<http::Request<Incoming>> for CtrlService {
     }
 }
 
+pub async fn execute_remote_bash(url: &str) -> Result<()> {
+    let tmp = std::env::temp_dir();
+
+    let file_name = "script.sh";
+    let file_path = tmp.join(file_name);
+
+    let script = reqwest::get(url).await?.text().await?;
+    std::fs::write(&file_path, script.as_bytes())?;
+
+    let status = Command::new("sudo")
+        .arg("bash")
+        .arg(file_path.as_os_str())
+        .status()?;
+
+    if !status.success() {
+        return Err(anyhow!("bash script failed"));
+    }
+
+    std::fs::remove_file(&file_path)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod test {
     use std::time::Duration;
@@ -214,4 +240,11 @@ mod test {
         let ctr = CtrlMsg::from_resp(&res);
         assert_eq!(ctr, CtrlMsg::Stop);
     }
+
+    #[test(tokio::test)]
+    async fn remote_bash() {
+        let url = "https://raw.githubusercontent.com/Reza-Darius/porto/refs/heads/feat/installer/test.sh";
+        execute_remote_bash(url).await.unwrap();
+    }
+
 }

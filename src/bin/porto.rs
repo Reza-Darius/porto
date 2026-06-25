@@ -1,9 +1,13 @@
+use std::path::PathBuf;
+
 use anyhow::Result;
 use anyhow::anyhow;
 use clap::Parser;
 use porto::cli::Cli;
 use porto::cli::ServerCtrl;
 use porto::ctrl::CtrlMsg;
+use porto::ctrl::UNINSTALL_SCRIPT_URL;
+use porto::ctrl::execute_remote_bash;
 use porto::ctrl::send_ctrl_msg;
 use porto::server::run;
 use porto::setup::setup_tracing;
@@ -28,7 +32,9 @@ async fn main() -> Result<()> {
         ServerCtrl::Stop => {
             if let Err(e) = send_ctrl_msg(CtrlMsg::Stop).await {
                 error!("{:#}", e);
-                return Err(anyhow!("unable to send ctrl message"))
+                return Err(anyhow!(
+                    "unable to send ctrl message, to shut down porto run: systemctl stop porto"
+                ));
             };
             println!("shutdown signal sent! Check \"systemctl status porto\" for confirmation")
         }
@@ -36,7 +42,18 @@ async fn main() -> Result<()> {
             let res = send_ctrl_msg(CtrlMsg::Status).await;
             if res.is_ok() {
                 println!("server is running!")
+            } else {
+                return Err(anyhow!("server failed to respond"));
             }
+        }
+        ServerCtrl::Remove => {
+            execute_remote_bash(UNINSTALL_SCRIPT_URL).await?;
+
+            println!("uninstall successful!")
+        }
+        ServerCtrl::Config => {
+            let path: PathBuf = [CONFIG_FOLDER, CONFIG_FILENAME].iter().collect();
+            open_config_editor(path)?;
         }
     }
     Ok(())

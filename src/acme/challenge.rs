@@ -4,11 +4,12 @@ use anyhow::Result;
 use hyper::{Request, Response, StatusCode, body::Incoming, server::conn::http1};
 use hyper_util::{rt::TokioIo, service::TowerToHyperService};
 use tokio::net::TcpListener;
-use tower::{BoxError, Service};
+use tower::Service;
 use tracing::{error, info, warn};
 
 use crate::{acme::PortoTLS, utils::*};
 
+// OPTIMIZE: setup and tear this down as needed
 pub fn setup_chall_server(addr: SocketAddr, store: PortoTLS) {
     tokio::spawn(async move {
         let listener = TcpListener::bind(addr).await.inspect_err(|e| error!(%e))?;

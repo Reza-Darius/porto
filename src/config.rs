@@ -3,6 +3,7 @@ use std::{
     fs,
     net::SocketAddr,
     path::{Path, PathBuf},
+    process::Command,
 };
 
 use anyhow::{Context, Result, anyhow};
@@ -17,7 +18,8 @@ use crate::{
 };
 
 const PORTO_CONFIG_ENV: &str = "PORTO_CONFIG";
-const CONFIG_FILENAME: &str = "porto.toml";
+pub const CONFIG_FILENAME: &str = "porto.toml";
+pub const CONFIG_FOLDER: &str = "/etc/porto";
 
 #[derive(Debug, Deserialize, Default)]
 pub struct PortoConfig {
@@ -165,6 +167,7 @@ pub fn setup_config(cli_args: Option<&RunArgs>) -> Result<PortoConfig> {
         }
 
         if config.global.bind.is_none() {
+            // TODO: if there is no bind, bind to 0.0.0.0:80 or 443 ?
             return Err(anyhow!(
                 "No listening address provided! Either pass a address as argument or set \"bind = [ADDR]\" inside the config"
             ));
@@ -257,6 +260,22 @@ fn contains_duplicates(proxies: &[ProxyConfig]) -> bool {
         }
     }
     false
+}
+
+pub fn open_config_editor(path: impl AsRef<Path>) -> Result<()> {
+    let path = path.as_ref();
+    if !path.exists() {
+        // TODO: if the file doesnt exist, prompt the user for creating one
+        return Err(anyhow!("no config file found"));
+    }
+
+    let status = Command::new("sudoedit").arg(path).status()?;
+
+    if !status.success() {
+        return Err(anyhow!("failed to open editor"));
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]

@@ -7,41 +7,49 @@ a simple but fast reverse proxy with TLS termination
 - Custom connection pool for blazingly fast performance
 - Proxying to UDS and TCP sockets
 - HTTPS support with rustls
-- ACME support for automatic certificate renewal
-- CLI and config file parsing with clap
+- ACME support for automatic certificate renewal (experimental)
+- Easy to use CLI and config
 - HTTP based control interface
 - Response caching according to RFC 7234
 - Response compression
 - Health checks
 - Custom rate limiter using a token bucket
+- Systemd interation
 
 ## WIP
 
 - Load Balancing
 - Notifications/Metrics
-- SystemD integration
 
-## Hello World
+## Installation
 
-build it with cargo
+### Script (recommended)
 
-```
-git clone https://github.com/Reza-Darius/porto
-cargo build
-porto start 127.0.0.1:4000
-```
+This is the recommended way for most users
 
-By default, porto looks for a `porto.toml` in the current working directory. Alternative a location can be provided by passing `-c path/to/config`
-
-## CLI
-
-```
-porto run - starts the porto proxy
-porto stop - shuts down a running porto server
-porto status - fetches information about a running porto server
+```bash
+curl -fsSL https://raw.githubusercontent.com/reza-darius/porto/main/scripts/install.sh | sudo bash
 ```
 
-## Config
+### From source
+
+```Bash
+git clone "https://github.com/Reza-Darius/porto"
+cd porto
+sudo make install
+```
+
+## Config and start
+
+Porto looks for a `porto.toml` in `/etc/porto/`. To edit it run `porto config`.
+
+Once configured run:
+
+```bash
+sudo systemctl enable --now porto
+```
+
+## Config file details
 
 ```toml
 # address for porto to listen on
