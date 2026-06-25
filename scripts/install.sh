@@ -16,11 +16,15 @@ fi
 
 INSTALL_USER=${SUDO_USER}
 BIN_NAME="porto"
+
 INSTALL_PATH="/usr/local/bin/${BIN_NAME}"
 SERVICE_PATH="/etc/systemd/system/${BIN_NAME}.service"
 
+CONFIG_FOLDER="/etc/porto"
 TMP_FOLDER="/tmp/porto"
+
 mkdir -p $TMP_FOLDER
+mkdir -p $CONFIG_FOLDER
 
 echo "downloading binaries"
 
@@ -71,6 +75,8 @@ if ! id -nG "${INSTALL_USER}" | grep -qw "porto"; then
   echo "adding $INSTALL_USER to porto group"
   usermod -aG porto "${INSTALL_USER}"
 fi
+
+echo "setting up systemd service"
 
 # generate/install service file
 if ! curl -fsSL "https://raw.githubusercontent.com/Reza-Darius/porto/refs/heads/feat/installer/scripts/porto.service" -o "${TMP_FOLDER}/porto.service"; then

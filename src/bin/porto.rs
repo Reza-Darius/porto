@@ -42,7 +42,7 @@ async fn main() -> Result<()> {
             }
         }
         ServerCtrl::Remove => {
-            let url = "https://raw.githubusercontent.com/Reza-Darius/porto/refs/heads/feat/installer/uninstall.sh";
+            let url = "https://raw.githubusercontent.com/Reza-Darius/porto/main/scripts/uninstall.sh";
             execute_remote_bash(url).await?;
 
             println!("uninstall successful!")

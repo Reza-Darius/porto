@@ -21,24 +21,20 @@ a simple but fast reverse proxy with TLS termination
 - Load Balancing
 - Notifications/Metrics
 
-## Hello World
+## Install
 
-build it with cargo
+it is recommended to use the install script
 
-```
-git clone https://github.com/Reza-Darius/porto
-cargo build
-porto start 127.0.0.1:4000
+```bash
+curl -fsSL https://raw.githubusercontent.com/reza-darius/porto/main/script/install.sh | sudo bash
 ```
 
-By default, porto looks for a `porto.toml` in the current working directory. Alternative a location can be provided by passing `-c path/to/config`
+Porto looks for a `porto.toml` in `/etc/porto/`.
 
-## CLI
+Once configured run:
 
-```
-porto run - starts the porto proxy
-porto stop - shuts down a running porto server
-porto status - fetches information about a running porto server
+```bash
+sudo systemctl enable --now porto
 ```
 
 ## Config

@@ -7,19 +7,21 @@ fi
 
 INSTALL_USER="${SUDO_USER}"
 
+INSTALL_PATH="/usr/local/bin/${BIN_NAME}"
+SERVICE_PATH="/etc/systemd/system/${BIN_NAME}.service"
+
+CONFIG_FOLDER="/etc/porto"
+
 # stop and disable the service
 systemctl stop porto 2>/dev/null
 systemctl disable porto 2>/dev/null
 
 # remove service file
-rm -f /etc/systemd/system/porto.service
+rm -f "$SERVICE_PATH"
 systemctl daemon-reload
 
-# remove binary
-rm -f /usr/local/bin/porto
-
-# remove config
-rm -rf /etc/porto
+rm -f "$INSTALL_PATH"
+rm -rf "$CONFIG_FOLDER"
 
 # remove user from group before deleting group
 if id -nG "${INSTALL_USER}" | grep -qw "porto"; then
