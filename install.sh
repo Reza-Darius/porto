@@ -9,17 +9,18 @@ if command -v porto >/dev/null 2>&1; then
   exit 1
 fi
 
-if [[ -z "$SUDO_USER" ]]; then
+if [[ -z "${SUDO_USER}" ]]; then
   echo "Please run this script using sudo, not as root directly."
   exit 1
 fi
 
 INSTALL_USER=${SUDO_USER}
-INSTALL_PATH="/usr/local/bin/porto"
-SERVICE_PATH="/etc/systemd/system/porto.service"
+BIN_NAME="porto"
+INSTALL_PATH="/usr/local/bin/${BIN_NAME}"
+SERVICE_PATH="/etc/systemd/system/${BIN_NAME}.service"
 
 # download the binary from the repo and make sure the hash matches before installing
-BINARY_URL="https://github.com/you/porto/releases/latest/download/porto-x86_64-linux"
+BINARY_URL="https://github.com/you/porto/releases/latest/download/${BIN_NAME}"
 CHECKSUM_URL="${BINARY_URL}.sha256"
 
 curl -fsSL "$BINARY_URL" -o /tmp/porto
@@ -30,7 +31,7 @@ if ! cd /tmp && sha256sum -c porto.sha256; then
   exit 1
 fi
 
-install -o root -g root -m 755 /tmp/porto ${INSTALL_PATH}
+install -o root -g root -m 755 /tmp/porto "${INSTALL_PATH}"
 
 # create the group if it doesn't exist
 getent group porto >/dev/null 2>&1 || groupadd --system porto
@@ -50,8 +51,8 @@ if ! id -nG "${INSTALL_USER}" | grep -qw "porto"; then
 fi
 
 # generate/install service file
-install -o root -g root -m 644 /tmp/porto.service ${SERVICE_PATH}
+install -o root -g root -m 644 /tmp/porto.service "${SERVICE_PATH}"
 systemctl daemon-reload
 
 # finish up
-su - "$INSTALL_USER"
+su - "{$INSTALL_USER}"

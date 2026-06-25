@@ -1,6 +1,6 @@
 #!/bin/bash
 
-if [[ "$EUID" -ne 0 ]]; then
+if [[ -z ${SUDO_USER} ]]; then
     echo "Please run as root: sudo $0"
     exit 1
 fi

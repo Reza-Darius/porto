@@ -4,6 +4,7 @@ use clap::Parser;
 use porto::cli::Cli;
 use porto::cli::ServerCtrl;
 use porto::ctrl::CtrlMsg;
+use porto::ctrl::execute_remote_bash;
 use porto::ctrl::send_ctrl_msg;
 use porto::server::run;
 use porto::setup::setup_tracing;
@@ -28,7 +29,9 @@ async fn main() -> Result<()> {
         ServerCtrl::Stop => {
             if let Err(e) = send_ctrl_msg(CtrlMsg::Stop).await {
                 error!("{:#}", e);
-                return Err(anyhow!("unable to send ctrl message, to shut down porto run: systemctl stop porto"))
+                return Err(anyhow!(
+                    "unable to send ctrl message, to shut down porto run: systemctl stop porto"
+                ));
             };
             println!("shutdown signal sent! Check \"systemctl status porto\" for confirmation")
         }
@@ -37,6 +40,12 @@ async fn main() -> Result<()> {
             if res.is_ok() {
                 println!("server is running!")
             }
+        }
+        ServerCtrl::Remove => {
+            let url = "https://raw.githubusercontent.com/Reza-Darius/porto/refs/heads/feat/installer/uninstall.sh";
+            execute_remote_bash(url).await?;
+
+            println!("uninstall successful!")
         }
     }
     Ok(())

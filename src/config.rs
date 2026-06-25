@@ -165,6 +165,7 @@ pub fn setup_config(cli_args: Option<&RunArgs>) -> Result<PortoConfig> {
         }
 
         if config.global.bind.is_none() {
+            // TODO: if there is no bind, bind to 0.0.0.0:80 or 443 ?
             return Err(anyhow!(
                 "No listening address provided! Either pass a address as argument or set \"bind = [ADDR]\" inside the config"
             ));

@@ -69,5 +69,6 @@ x509-parser = { version = "0.18.1", features = ["aws-lc-rs"] }
 
 [dev-dependencies]
 test-log = {version = "0.2", features = ["trace"]}
+
 [profile.release]
 # debug = true  # Include debug symbols

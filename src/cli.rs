@@ -18,6 +18,8 @@ pub enum ServerCtrl {
     Stop,
     /// Retrieve the status of a running Porto proxy
     Status,
+    /// uninstalls porto
+    Remove,
 }
 
 #[derive(Args, Debug)]
