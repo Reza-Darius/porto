@@ -10,7 +10,7 @@ fi
 INSTALL_USER=${SUDO_USER}
 BIN_NAME="porto"
 
-BINARY_URL="https://github.com/Reza-Darius/porto/releases/download/test-release/${BIN_NAME}"
+BINARY_URL="https://github.com/Reza-Darius/porto/releases/download/latest/${BIN_NAME}"
 SERVICE_URL="https://raw.githubusercontent.com/Reza-Darius/porto/refs/heads/feat/installer/scripts/porto.service"
 HELP_CONFIG_URL="https://raw.githubusercontent.com/Reza-Darius/porto/refs/heads/feat/installer/scripts/help_porto.toml"
 
