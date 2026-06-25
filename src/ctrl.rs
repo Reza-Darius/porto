@@ -19,7 +19,7 @@ use crate::utils::SvcBoxFut;
 
 const NOTIFY_SOCKET: &str = "NOTIFY_SOCKET";
 const CTRL_SOCK_PATH: &str = "/run/porto/ctrl.sock";
-pub const UNINSTALL_SCRIPT_URL: &str = "https://raw.githubusercontent.com/Reza-Darius/porto/main/scripts/uninstall.sh";
+pub const UNINSTALL_SCRIPT_URL: &str = "https://raw.githubusercontent.com/Reza-Darius/porto/refs/heads/main/scripts/uninstall.sh";
 
 /// sets up the ctrl socket for the server in the background
 pub fn setup_ctrl_sock() -> Result<Receiver<CtrlMsg>> {

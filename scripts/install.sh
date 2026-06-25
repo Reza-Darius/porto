@@ -11,8 +11,10 @@ INSTALL_USER=${SUDO_USER}
 BIN_NAME="porto"
 
 BINARY_URL="https://github.com/Reza-Darius/porto/releases/download/latest/${BIN_NAME}"
-SERVICE_URL="https://raw.githubusercontent.com/Reza-Darius/porto/refs/heads/feat/installer/scripts/porto.service"
-HELP_CONFIG_URL="https://raw.githubusercontent.com/Reza-Darius/porto/refs/heads/feat/installer/scripts/help_porto.toml"
+SCRIPTS_URL="https://raw.githubusercontent.com/Reza-Darius/porto/refs/heads/main/scripts"
+
+SERVICE_URL="${SCRIPTS_URL}/porto.service"
+HELP_CONFIG_URL="${SCRIPTS_URL}/help_porto.toml"
 
 INSTALL_PATH="/usr/local/bin/${BIN_NAME}"
 SERVICE_PATH="/etc/systemd/system/${BIN_NAME}.service"
