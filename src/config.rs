@@ -17,7 +17,8 @@ use crate::{
 };
 
 const PORTO_CONFIG_ENV: &str = "PORTO_CONFIG";
-const CONFIG_FILENAME: &str = "porto.toml";
+pub const CONFIG_FILENAME: &str = "porto.toml";
+pub const CONFIG_FOLDER: &str = "/etc/porto";
 
 #[derive(Debug, Deserialize, Default)]
 pub struct PortoConfig {
@@ -258,6 +259,14 @@ fn contains_duplicates(proxies: &[ProxyConfig]) -> bool {
         }
     }
     false
+}
+
+
+
+pub fn open_config_editor(path: impl AsRef<Path>) -> Result<()> {
+    let path = path.as_ref();
+    todo!()
+
 }
 
 #[cfg(test)]

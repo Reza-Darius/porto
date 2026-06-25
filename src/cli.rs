@@ -20,6 +20,8 @@ pub enum ServerCtrl {
     Status,
     /// uninstalls porto
     Remove,
+    /// opens the config file for editing, uses the editor from the $EDITOR env variable
+    Config,
 }
 
 #[derive(Args, Debug)]

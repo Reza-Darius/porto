@@ -5,7 +5,7 @@ use rustls::{ServerConfig, server::ResolvesServerCert};
 use tap::Pipe;
 use x509_parser::pem::{Pem, parse_x509_pem};
 
-use crate::{config::TlsConfig, setup::setup_tls_from_file, utils::CertChainPem};
+use crate::config::TlsConfig;
 
 pub fn read_pem_file(path: impl AsRef<Path>) -> Result<Pem> {
     path.as_ref()
@@ -21,7 +21,10 @@ pub fn read_pem_file(path: impl AsRef<Path>) -> Result<Pem> {
         .map_err(|e| anyhow!("{e}"))
 }
 
-pub fn setup_rustls_config(config: &TlsConfig, resolver: Arc<impl ResolvesServerCert + 'static>) -> ServerConfig {
+pub fn setup_rustls_config(
+    config: &TlsConfig,
+    resolver: Arc<impl ResolvesServerCert + 'static>,
+) -> ServerConfig {
     // this should crash the program if called twice
     rustls::crypto::aws_lc_rs::default_provider()
         .install_default()

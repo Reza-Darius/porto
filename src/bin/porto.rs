@@ -1,9 +1,12 @@
+use std::path::PathBuf;
+
 use anyhow::Result;
 use anyhow::anyhow;
 use clap::Parser;
 use porto::cli::Cli;
 use porto::cli::ServerCtrl;
 use porto::ctrl::CtrlMsg;
+use porto::ctrl::UNINSTALL_SCRIPT_URL;
 use porto::ctrl::execute_remote_bash;
 use porto::ctrl::send_ctrl_msg;
 use porto::server::run;
@@ -42,11 +45,14 @@ async fn main() -> Result<()> {
             }
         }
         ServerCtrl::Remove => {
-            let url = "https://raw.githubusercontent.com/Reza-Darius/porto/main/scripts/uninstall.sh";
-            execute_remote_bash(url).await?;
+            execute_remote_bash(UNINSTALL_SCRIPT_URL).await?;
 
             println!("uninstall successful!")
         }
+        ServerCtrl::Config => {
+            let path: PathBuf = [CONFIG_FOLDER, CONFIG_FILENAME].iter().collect();
+            open_config_editor(path)?;
+        },
     }
     Ok(())
 }

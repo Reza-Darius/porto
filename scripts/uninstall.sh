@@ -5,6 +5,7 @@ if [[ -z ${SUDO_USER} ]]; then
     exit 1
 fi
 
+BIN_NAME="porto"
 INSTALL_USER="${SUDO_USER}"
 
 INSTALL_PATH="/usr/local/bin/${BIN_NAME}"
@@ -20,7 +21,7 @@ systemctl disable porto 2>/dev/null
 rm -f "$SERVICE_PATH"
 systemctl daemon-reload
 
-rm -f "$INSTALL_PATH"
+rm -f "${INSTALL_PATH}"
 rm -rf "$CONFIG_FOLDER"
 
 # remove user from group before deleting group
