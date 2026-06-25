@@ -1,4 +1,7 @@
 on:
+  pull_request: 
+    branches:
+      - main
   push:
     branches:
       - main  # triggers on every push to main, no tags needed
@@ -7,13 +10,13 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Build
-        run: cargo build --release
+        run: cargo build --release --bin porto
 
-      - name: Update rolling release
-        uses: softprops/action-gh-release@v1
+      - name: Release
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: latest
           name: Latest

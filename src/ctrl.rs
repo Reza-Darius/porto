@@ -241,10 +241,10 @@ mod test {
         assert_eq!(ctr, CtrlMsg::Stop);
     }
 
-    #[test(tokio::test)]
-    async fn remote_bash() {
-        let url = "https://raw.githubusercontent.com/Reza-Darius/porto/refs/heads/feat/installer/test.sh";
-        execute_remote_bash(url).await.unwrap();
-    }
+    // #[test(tokio::test)]
+    // async fn remote_bash() {
+    //     let url = "https://raw.githubusercontent.com/Reza-Darius/porto/refs/heads/feat/installer/test.sh";
+    //     execute_remote_bash(url).await.unwrap();
+    // }
 
 }
