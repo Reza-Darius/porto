@@ -9,7 +9,7 @@ User=porto
 Group=porto
 
 Environment="RUST_LOG=info"
-ExecStart=/usr/local/bin/porto run
+ExecStart=/usr/local/bin/porto start
 
 TimeoutStartSec=10
 TimeoutStopSec=30
