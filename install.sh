@@ -23,8 +23,15 @@ SERVICE_PATH="/etc/systemd/system/${BIN_NAME}.service"
 BINARY_URL="https://github.com/you/porto/releases/latest/download/${BIN_NAME}"
 CHECKSUM_URL="${BINARY_URL}.sha256"
 
-curl -fsSL "$BINARY_URL" -o /tmp/porto
-curl -fsSL "$CHECKSUM_URL" -o /tmp/porto.sha256
+if ! curl -fsSL "$BINARY_URL" -o /tmp/porto; then
+  echo "binary download failed"
+  exit 1
+fi
+
+if ! curl -fsSL "$CHECKSUM_URL" -o /tmp/porto.sha256; then
+  echo "checksum download failed"
+  exit 1
+fi
 
 if ! cd /tmp && sha256sum -c porto.sha256; then
   echo "warning: checksum verification failed"

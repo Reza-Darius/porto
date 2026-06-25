@@ -23,7 +23,7 @@ rm -rf /etc/porto
 
 # remove user from group before deleting group
 if id -nG "${INSTALL_USER}" | grep -qw "porto"; then
-    gpasswd -d "${INSTALL_USER}" porto
+    gpasswd -d "${INSTALL_USER}" porto > /dev/null 2>&1
 fi
 
 # remove system user and group
