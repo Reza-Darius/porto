@@ -20,7 +20,7 @@ const PROXY_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 
 
 pub static INIT: Once = Once::new();
 
-pub fn setup_test_config(domains: &[&str], backends: &[&str]) -> Arc<PortoConfig> {
+pub fn setup_test_config(domains: &[&str], backends: &[&str]) -> PortoConfig {
     assert!(domains.len() == backends.len());
 
     let mut config = PortoConfig::default();
@@ -38,7 +38,7 @@ pub fn setup_test_config(domains: &[&str], backends: &[&str]) -> Arc<PortoConfig
     }
 
     eprintln!("config: {config:#?}");
-    Arc::new(config)
+    config
 }
 
 pub async fn setup_test_server(config: Arc<PortoConfig>) {

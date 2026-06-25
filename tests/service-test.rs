@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use test_log::test;
 
 mod common;
@@ -16,7 +18,7 @@ async fn health_ping() {
     let domains = &["testpeer.com", "testpeeruds.com", "rezadarius.de"];
     let backends = &["127.0.0.2:8000", "127.0.0.3:8000", "/tmp/test_peer.sock"];
 
-    let config = setup_test_config(domains, backends);
+    let config = Arc::new(setup_test_config(domains, backends));
     let client = get_client(domains, config.addr());
 
     setup_test_server(config).await;

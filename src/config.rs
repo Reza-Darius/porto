@@ -262,11 +262,48 @@ fn contains_duplicates(proxies: &[ProxyConfig]) -> bool {
     false
 }
 
+pub fn write_help_config(path: impl AsRef<Path>) -> Result<()> {
+    let conf = r#" 
+        [global]
+        # optional: address to listen on, will default to 0.0.0.0:80 or 0.0.0.0:443, depending on TLS settings
+        bind = "127.0.0.1:3000"
+
+        # enables the global rate limiter, default = true
+        limit = true
+
+        [tls]
+        # toggles HTTPS, default = true
+        tls = true
+
+        # optional: enables ACME for automatic certificates, default = false
+        auto_cert = false
+
+        # if acme is disabled and tls enabled, you need to provide cert and key for TLS yourself using these settings
+        # note that porto cant access user home directories, so it is recommended to place them in /etc/porto/
+        cert_path = "/etc/porto/example_cert.pem"
+        key_path = "/etc/porto/example_key.pem"
+
+        # add any number of proxies
+        [[proxy]]
+        # proxies HTTP messages from domain to upstream
+        domain = "mywebsite.com"
+
+        # upstream support IPv4 addresses and unix domain socket paths
+        upstream = "127.0.0.1:6767"
+
+        # optional: enable HTTP2 if the backend supports it, default = false
+        http2 = true
+    "#;
+
+    fs::write(path.as_ref(), conf)?;
+    Ok(())
+}
+
 pub fn open_config_editor(path: impl AsRef<Path>) -> Result<()> {
     let path = path.as_ref();
+
     if !path.exists() {
-        // TODO: if the file doesnt exist, prompt the user for creating one
-        return Err(anyhow!("no config file found"));
+        write_help_config(path)?;
     }
 
     let status = Command::new("sudoedit").arg(path).status()?;
