@@ -74,9 +74,14 @@ fi
 install -o root -g root -m 644 "${TMP_FOLDER}/porto.service" "${SERVICE_PATH}"
 systemctl daemon-reload
 
+
 # generate config
 if [[ ! -f "${CONFIG_FOLDER}/porto.toml" ]]; then
-  curl -fsSL "${HELP_CONFIG_URL}"-o "{$CONFIG_FOLDER}/porto.toml"
+  echo "fetching config"
+  if ! curl -fsSL "${HELP_CONFIG_URL}" -o "${CONFIG_FOLDER}/porto.toml"; then
+    echo "failed to fetch config"
+    exit 1
+  fi
 fi
 
 # finish up
