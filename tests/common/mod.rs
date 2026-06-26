@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use porto::config::{PortoConfig, ProxyConfig};
 use porto::utils::{Domain, PeerAddr};
+use tokio::task::JoinSet;
 
 use crate::common::backend::run_backends;
 use crate::common::proxy::run_proxy;
@@ -39,23 +40,37 @@ pub fn setup_test_config(domains: &[&str], backends: &[&str]) -> PortoConfig {
     config
 }
 
-pub async fn setup_test_server(config: Arc<PortoConfig>) {
-    // we spawn each server into their own thread to prevent server from going offline 
+pub fn setup_test_server(config: Arc<PortoConfig>) {
+    // we spawn each server into their own thread to prevent server from going offline
     // when the runtime of each test shuts down
     INIT.call_once(|| {
         let cfg_clone = config.clone();
-        std::thread::spawn(move || {
-            tokio::runtime::Runtime::new()
-                .unwrap()
-                .block_on(run_backends(cfg_clone));
-        });
 
         std::thread::spawn(move || {
             tokio::runtime::Runtime::new()
                 .unwrap()
-                .block_on(run_proxy(config));
+                .block_on(async move {
+                    let mut handles = JoinSet::new();
+
+                    handles.spawn(run_backends(cfg_clone));
+                    handles.spawn(run_proxy(config));
+
+                    handles.join_all().await;
+                });
         });
+
+        // std::thread::spawn(move || {
+        //     tokio::runtime::Runtime::new()
+        //         .unwrap()
+        //         .block_on(run_backends(cfg_clone));
+        // });
+        //
+        // std::thread::spawn(move || {
+        //     tokio::runtime::Runtime::new()
+        //         .unwrap()
+        //         .block_on(run_proxy(config));
+        // });
     });
     // sleep to give servers time to setup
-    tokio::time::sleep(Duration::from_secs(5)).await;
+    std::thread::sleep(Duration::from_secs(5));
 }

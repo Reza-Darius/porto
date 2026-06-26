@@ -30,7 +30,7 @@ async fn proxying() {
     let client = get_client(DOMAINS, config.addr());
 
     adjust_settings(&mut config);
-    setup_test_server(Arc::new(config)).await;
+    setup_test_server(Arc::new(config));
 
     for domain in DOMAINS.iter() {
         info!("trying to ping {domain}");
@@ -53,7 +53,7 @@ async fn rate_limit() {
     // TODO: get rid of this hard coded value
     let bucket_size = 10;
 
-    setup_test_server(Arc::new(config)).await;
+    setup_test_server(Arc::new(config));
 
     let send = async || {
         client
