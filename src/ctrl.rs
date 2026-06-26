@@ -17,8 +17,12 @@ use url::Url;
 
 use crate::utils::SvcBoxFut;
 
+/// the env variable provided by systemd which identifies the socket for sending sd notify signals
 const NOTIFY_SOCKET: &str = "NOTIFY_SOCKET";
-pub const CTRL_SOCK_PATH: &str = "/run/porto/ctrl.sock";
+
+/// the socket porto listens on when running as a systemd service
+pub const SD_CTRL_SOCK_PATH: &str = "/run/porto/ctrl.sock";
+
 pub const UNINSTALL_SCRIPT_URL: &str = "https://raw.githubusercontent.com/Reza-Darius/porto/main/scripts/uninstall.sh";
 
 /// sets up the ctrl socket for the server in the background

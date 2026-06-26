@@ -36,15 +36,25 @@ pub fn setup_test_config(domains: &[&str], backends: &[&str]) -> PortoConfig {
             config: Default::default(),
         });
     }
-
-    eprintln!("config: {config:#?}");
     config
 }
 
 pub async fn setup_test_server(config: Arc<PortoConfig>) {
+    // we spawn each server into their own thread to prevent server from going offline 
+    // when the runtime of each test shuts down
     INIT.call_once(|| {
-        tokio::spawn(run_backends(config.clone()));
-        tokio::spawn(run_proxy(config));
+        let cfg_clone = config.clone();
+        std::thread::spawn(move || {
+            tokio::runtime::Runtime::new()
+                .unwrap()
+                .block_on(run_backends(cfg_clone));
+        });
+
+        std::thread::spawn(move || {
+            tokio::runtime::Runtime::new()
+                .unwrap()
+                .block_on(run_proxy(config));
+        });
     });
     // sleep to give servers time to setup
     tokio::time::sleep(Duration::from_secs(5)).await;

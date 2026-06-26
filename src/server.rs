@@ -23,7 +23,7 @@ use crate::utils::*;
 
 #[instrument(skip_all)]
 pub async fn run(config: &PortoConfig) -> Result<()> {
-    let mut ctrl_rx = setup_ctrl_sock(CTRL_SOCK_PATH)?;
+    let mut ctrl_rx = setup_ctrl_sock(&config.internal.ctrl_sock_path)?;
     let listener = setup_listener(config)?;
     let tls_acceptor = setup_tls_from_file(&config.tls)?;
     let service = setup_service4(config);

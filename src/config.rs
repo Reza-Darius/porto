@@ -4,6 +4,7 @@ use std::{
     net::SocketAddr,
     path::{Path, PathBuf},
     process::Command,
+    time::Duration,
 };
 
 use anyhow::{Context, Result, anyhow};
@@ -14,6 +15,7 @@ use tracing::{debug, error, info, instrument, warn};
 
 use crate::{
     cli::RunArgs,
+    ctrl::SD_CTRL_SOCK_PATH,
     utils::{Domain, Peer, PeerAddr},
 };
 
@@ -28,12 +30,36 @@ pub struct PortoConfig {
     pub tls: TlsConfig,
     #[serde(default)]
     proxy: Vec<ProxyConfig>,
+
+    /// these settings arent exposed to the user
+    #[serde(skip)]
+    pub internal: InternalSettings,
+}
+
+#[derive(Debug)]
+pub struct InternalSettings {
+    pub ctrl_sock_path: PathBuf,
+}
+
+impl Default for InternalSettings {
+    fn default() -> Self {
+        Self {
+            ctrl_sock_path: SD_CTRL_SOCK_PATH.into(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
 pub struct GlobalSettings {
     pub bind: Option<SocketAddr>,
     pub limit: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RateLimitSettings {
+    pub bucket_size: u16,
+    pub refill_amount: u16,
+    pub refill_interval: Duration,
 }
 
 impl Default for GlobalSettings {
@@ -106,7 +132,7 @@ impl TlsConfig {
     pub fn validate(&mut self) -> Result<()> {
         if self.enabled && (self.cert_path.is_none() || self.key_path.is_none()) {
             return Err(anyhow!(
-                "TLS set to true, but no cert or key path provided. If you wish to not use TLS pass \"tls = false\" inside the config"
+                "TLS set to true, but no cert or key path provided. If you wish to not use TLS set \"tls = false\" inside the config under [global]."
             ));
         }
 
@@ -169,7 +195,7 @@ pub fn setup_config(cli_args: Option<&RunArgs>) -> Result<PortoConfig> {
         if config.global.bind.is_none() {
             // TODO: if there is no bind, bind to 0.0.0.0:80 or 443 ?
             return Err(anyhow!(
-                "No listening address provided! Either pass a address as argument or set \"bind = [ADDR]\" inside the config"
+                "No listening address provided! Either pass a address as argument or set \"bind = [ADDR]\" inside the config."
             ));
         }
         Ok(config)
@@ -238,12 +264,12 @@ fn parse_config_file(path: impl AsRef<Path>) -> Result<PortoConfig> {
 
     if config.proxy.is_empty() {
         return Err(anyhow!(
-            "Config error: no upstream paths provided! Configure at least one Proxy"
+            "config error: no proxy provided! Configure at least one proxy"
         ));
     }
 
     if contains_duplicates(&config.proxy) {
-        return Err(anyhow!("Config error: duplicate proxy entires"));
+        return Err(anyhow!("config error: duplicate proxy entires"));
     }
 
     info!("config loaded from {}", path.display());

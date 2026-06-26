@@ -253,7 +253,7 @@ mod tests {
     use super::*;
     use challenge::*;
 
-    #[test(tokio::test)]
+    #[test(tokio::test)] #[ignore]
     async fn acme_test() -> Result<()> {
         /*
         HOW TO TEST:
