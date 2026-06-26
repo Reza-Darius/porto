@@ -52,9 +52,13 @@ async fn main() -> Result<()> {
 
             println!("uninstall successful!")
         }
-        ServerCtrl::Config => {
+        ServerCtrl::Config(args) => {
             let path: PathBuf = [CONFIG_FOLDER, CONFIG_FILENAME].iter().collect();
-            open_config_editor(path)?;
+            if args.init {
+                println!("fetching config...");
+                write_tmpl_config(&path).await?;
+            }
+            open_config_editor(&path)?;
         }
     }
     Ok(())

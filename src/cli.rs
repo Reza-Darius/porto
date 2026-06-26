@@ -21,7 +21,7 @@ pub enum ServerCtrl {
     /// uninstalls porto
     Remove,
     /// opens the config file for editing, uses the editor from the $EDITOR env variable
-    Config,
+    Config(ConfigCmdArgs),
 }
 
 #[derive(Args, Debug)]
@@ -38,4 +38,10 @@ pub struct RunArgs {
     pub background: bool,
 }
 
+#[derive(Args, Debug)]
+pub struct ConfigCmdArgs {
+    /// initializes a config template
+    #[arg(short, default_value_t = false)]
+    pub init: bool
+}
 

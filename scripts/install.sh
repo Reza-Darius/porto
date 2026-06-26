@@ -74,7 +74,6 @@ fi
 install -o root -g root -m 644 "${TMP_FOLDER}/porto.service" "${SERVICE_PATH}"
 systemctl daemon-reload
 
-
 # generate config
 if [[ ! -f "${CONFIG_FOLDER}/porto.toml" ]]; then
   echo "fetching config"
@@ -82,7 +81,12 @@ if [[ ! -f "${CONFIG_FOLDER}/porto.toml" ]]; then
     echo "failed to fetch config"
     exit 1
   fi
+  chown root:porto /etc/porto/porto.toml
+  chmod 640 /etc/porto/porto.toml
 fi
+
+chown root:porto /etc/porto
+chmod 750 /etc/porto
 
 # finish up
 # su - "${INSTALL_USER}"

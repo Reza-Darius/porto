@@ -22,6 +22,8 @@ use crate::{
 const PORTO_CONFIG_ENV: &str = "PORTO_CONFIG";
 pub const CONFIG_FILENAME: &str = "porto.toml";
 pub const CONFIG_FOLDER: &str = "/etc/porto";
+pub const TMPL_CFG_URL: &str =
+    "https://raw.githubusercontent.com/Reza-Darius/porto/main/scripts/help_porto.toml";
 
 #[derive(Debug, Deserialize, Default)]
 pub struct PortoConfig {
@@ -288,48 +290,13 @@ fn contains_duplicates(proxies: &[ProxyConfig]) -> bool {
     false
 }
 
-pub fn write_help_config(path: impl AsRef<Path>) -> Result<()> {
-    let conf = r#" 
-        [global]
-        # optional: address to listen on, will default to 0.0.0.0:80 or 0.0.0.0:443, depending on TLS settings
-        bind = "127.0.0.1:3000"
-
-        # enables the global rate limiter, default = true
-        limit = true
-
-        [tls]
-        # toggles HTTPS, default = true
-        tls = true
-
-        # optional: enables ACME for automatic certificates, default = false
-        auto_cert = false
-
-        # if acme is disabled and tls enabled, you need to provide cert and key for TLS yourself using these settings
-        # note that porto cant access user home directories, so it is recommended to place them in /etc/porto/
-        cert_path = "/etc/porto/example_cert.pem"
-        key_path = "/etc/porto/example_key.pem"
-
-        # add any number of proxies
-        [[proxy]]
-        # proxies HTTP messages from domain to upstream
-        domain = "mywebsite.com"
-
-        # upstream support IPv4 addresses and unix domain socket paths
-        upstream = "127.0.0.1:6767"
-
-        # optional: enable HTTP2 if the backend supports it, default = false
-        http2 = true
-    "#;
-
-    fs::write(path.as_ref(), conf)?;
-    Ok(())
-}
-
 pub fn open_config_editor(path: impl AsRef<Path>) -> Result<()> {
     let path = path.as_ref();
 
     if !path.exists() {
-        write_help_config(path)?;
+        return Err(anyhow!(
+            "no config found, if you wish to restore the starter config run: sudo -E porto config -i"
+        ));
     }
 
     let status = Command::new("sudoedit").arg(path).status()?;
@@ -338,6 +305,14 @@ pub fn open_config_editor(path: impl AsRef<Path>) -> Result<()> {
         return Err(anyhow!("failed to open editor"));
     }
 
+    Ok(())
+}
+
+pub async fn write_tmpl_config(path: impl AsRef<Path>) -> Result<()> {
+    let config = reqwest::get(TMPL_CFG_URL).await?.text().await?;
+    fs::write(&path, config)?;
+
+    println!("new config at: {}", path.as_ref().display());
     Ok(())
 }
 
