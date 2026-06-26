@@ -80,5 +80,23 @@ async fn rate_limit() {
     assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
 }
 
-// TODO: tests:
-// - response compression
+#[test(tokio::test)]
+async fn compression() {
+    let mut config = setup_test_config(DOMAINS, BACKENDS);
+    adjust_settings(&mut config);
+
+    let client = get_client(DOMAINS, config.addr());
+
+    setup_test_server(Arc::new(config));
+
+    let res = client
+        .get(format!("https://{}/comp", &DOMAINS[0]))
+        .header(http::header::ACCEPT_ENCODING, "gzip")
+        .send()
+        .await
+        .expect("the backend is available and should respond");
+
+    assert_eq!(res.headers()["content-encoding"], "gzip");
+    let body = res.bytes().await.unwrap();
+    eprintln!("body length: {} bytes", body.len());
+}

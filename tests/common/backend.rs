@@ -89,10 +89,13 @@ async fn health() -> StatusCode {
     StatusCode::OK
 }
 
+
 async fn comp() -> Response {
+    let body = "this is a response body".repeat(10);
+    eprintln!("pre-compressed body length {} bytes", body.len());
     Response::builder()
         .status(StatusCode::OK)
-        .body(Body::from("this is a response body".repeat(10)))
+        .body(Body::from(body))
         .expect("the values are hard coded")
 }
 

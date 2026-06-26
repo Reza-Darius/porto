@@ -21,3 +21,6 @@ c:
       https://testpeer.com:4000/ \
       -H "Accept-Encoding: gzip" \
       -v
+
+t:
+    cargo test --test service-test -- --show-output

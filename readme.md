@@ -33,6 +33,8 @@ curl -fsSL https://raw.githubusercontent.com/Reza-Darius/porto/main/scripts/inst
 
 ### From source
 
+This method requires `cargo`
+
 ```Bash
 git clone "https://github.com/Reza-Darius/porto"
 cd porto
