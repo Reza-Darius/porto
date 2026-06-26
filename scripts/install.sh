@@ -22,14 +22,14 @@ SERVICE_PATH="/etc/systemd/system/${BIN_NAME}.service"
 CONFIG_FOLDER="/etc/porto"
 TMP_FOLDER="/tmp/porto"
 
-mkdir -p $TMP_FOLDER
-mkdir -p $CONFIG_FOLDER
+mkdir -p "${TMP_FOLDER}"
+mkdir -p "${CONFIG_FOLDER}"
 
 # check if porto is already installed
-if ! command -v porto >/dev/null 2>&1; then
+if ! command -v "${BIN_NAME}" >/dev/null 2>&1; then
   echo "downloading binaries"
 
-  if ! curl -fsSL "$BINARY_URL" -o "${TMP_FOLDER}/porto"; then
+  if ! curl -fsSL "${BINARY_URL}" -o "${TMP_FOLDER}/porto"; then
     echo "binary download failed"
     exit 1
   fi
@@ -57,12 +57,6 @@ if ! getent passwd porto >/dev/null 2>&1; then
     porto
 fi
 
-# add the install user to the group if not already a member
-if ! id -nG "${INSTALL_USER}" | grep -qw "porto"; then
-  echo "adding $INSTALL_USER to porto group"
-  usermod -aG porto "${INSTALL_USER}"
-fi
-
 echo "setting up systemd service"
 
 # generate/install service file
@@ -82,11 +76,11 @@ if [[ ! -f "${CONFIG_FOLDER}/porto.toml" ]]; then
     exit 1
   fi
   chown root:porto /etc/porto/porto.toml
-  chmod 640 /etc/porto/porto.toml
+  chmod 644 /etc/porto/porto.toml
 fi
 
 chown root:porto /etc/porto
-chmod 750 /etc/porto
+chmod 755 /etc/porto
 
 # finish up
 # su - "${INSTALL_USER}"

@@ -51,6 +51,8 @@ Once configured run:
 sudo systemctl enable --now porto
 ```
 
+To stop the server run either `porto stop` or `systemctl stop porto`
+
 ## Config file details
 
 ```toml
