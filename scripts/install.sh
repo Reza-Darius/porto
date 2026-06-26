@@ -7,7 +7,6 @@ if [[ -z "${SUDO_USER}" ]]; then
   exit 1
 fi
 
-INSTALL_USER=${SUDO_USER}
 BIN_NAME="porto"
 
 BINARY_URL="https://github.com/Reza-Darius/porto/releases/latest/download/${BIN_NAME}"
@@ -25,17 +24,17 @@ TMP_FOLDER="/tmp/porto"
 mkdir -p "${TMP_FOLDER}"
 mkdir -p "${CONFIG_FOLDER}"
 
-# check if porto is already installed
-if ! command -v "${BIN_NAME}" >/dev/null 2>&1; then
-  echo "downloading binaries"
+chown root:porto /etc/porto
+chmod 755 /etc/porto
 
-  if ! curl -fsSL "${BINARY_URL}" -o "${TMP_FOLDER}/porto"; then
-    echo "binary download failed"
-    exit 1
-  fi
+echo "downloading binaries"
 
-  install -o root -g root -m 755 "${TMP_FOLDER}/porto" "${INSTALL_PATH}"
+if ! curl -fsSL "${BINARY_URL}" -o "${TMP_FOLDER}/porto"; then
+  echo "binary download failed"
+  exit 1
 fi
+
+install -o root -g root -m 755 "${TMP_FOLDER}/porto" "${INSTALL_PATH}"
 
 echo "binary installed, checking group and settings"
 
@@ -78,9 +77,6 @@ if [[ ! -f "${CONFIG_FOLDER}/porto.toml" ]]; then
   chown root:porto /etc/porto/porto.toml
   chmod 644 /etc/porto/porto.toml
 fi
-
-chown root:porto /etc/porto
-chmod 755 /etc/porto
 
 # finish up
 # su - "${INSTALL_USER}"
