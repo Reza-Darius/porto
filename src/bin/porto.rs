@@ -5,10 +5,11 @@ use anyhow::anyhow;
 use clap::Parser;
 use porto::cli::Cli;
 use porto::cli::ServerCtrl;
-use porto::ctrl::SD_CTRL_SOCK_PATH;
 use porto::ctrl::CtrlMsg;
+use porto::ctrl::SD_CTRL_SOCK_PATH;
 use porto::ctrl::UNINSTALL_SCRIPT_URL;
-use porto::ctrl::execute_remote_bash;
+use porto::ctrl::execute_remote_script;
+use porto::ctrl::prompt_confirmation;
 use porto::ctrl::send_ctrl_msg;
 use porto::server::run;
 use porto::setup::setup_tracing;
@@ -48,7 +49,10 @@ async fn main() -> Result<()> {
             }
         }
         ServerCtrl::Remove => {
-            execute_remote_bash(UNINSTALL_SCRIPT_URL).await?;
+            let prompt ="do you wish to remove porto? y/n";
+            prompt_confirmation(prompt);
+
+            execute_remote_script(UNINSTALL_SCRIPT_URL).await?;
 
             println!("uninstall successful!")
         }

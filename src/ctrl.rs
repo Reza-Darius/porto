@@ -23,7 +23,8 @@ const NOTIFY_SOCKET: &str = "NOTIFY_SOCKET";
 /// the socket porto listens on when running as a systemd service
 pub const SD_CTRL_SOCK_PATH: &str = "/run/porto/ctrl.sock";
 
-pub const UNINSTALL_SCRIPT_URL: &str = "https://raw.githubusercontent.com/Reza-Darius/porto/main/scripts/uninstall.sh";
+pub const UNINSTALL_SCRIPT_URL: &str =
+    "https://raw.githubusercontent.com/Reza-Darius/porto/main/scripts/uninstall.sh";
 
 /// sets up the ctrl socket for the server in the background
 pub fn setup_ctrl_sock(path: impl AsRef<Path>) -> Result<Receiver<CtrlMsg>> {
@@ -196,7 +197,31 @@ impl hyper::service::Service<http::Request<Incoming>> for CtrlService {
     }
 }
 
-pub async fn execute_remote_bash(url: &str) -> Result<()> {
+pub fn prompt_confirmation(prompt: &str) {
+    let mut buf = String::new();
+    let stdin = std::io::stdin();
+
+    println!("{prompt}");
+    loop {
+        stdin.read_line(&mut buf).expect("if this fails just crash");
+        buf.make_ascii_lowercase();
+
+        match buf.trim() {
+            "y" => return,
+            "n" => {
+                println!("remove routine aborted");
+                std::process::exit(0)
+            }
+            _ => {
+                println!("invalid input");
+                buf.clear();
+                continue;
+            }
+        }
+    }
+}
+
+pub async fn execute_remote_script(url: &str) -> Result<()> {
     let tmp = std::env::temp_dir();
 
     let file_name = "script.sh";
@@ -251,5 +276,4 @@ mod test {
     //     let url = "https://raw.githubusercontent.com/Reza-Darius/porto/refs/heads/feat/installer/test.sh";
     //     execute_remote_bash(url).await.unwrap();
     // }
-
 }

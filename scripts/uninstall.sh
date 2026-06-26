@@ -22,7 +22,7 @@ rm -f "$SERVICE_PATH"
 systemctl daemon-reload
 
 rm -f "${INSTALL_PATH}"
-rm -rf "$CONFIG_FOLDER"
+rm -rf "${CONFIG_FOLDER}"
 
 # remove user from group before deleting group
 if id -nG "${INSTALL_USER}" | grep -qw "porto"; then
