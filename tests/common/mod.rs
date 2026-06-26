@@ -58,18 +58,6 @@ pub fn setup_test_server(config: Arc<PortoConfig>) {
                     handles.join_all().await;
                 });
         });
-
-        // std::thread::spawn(move || {
-        //     tokio::runtime::Runtime::new()
-        //         .unwrap()
-        //         .block_on(run_backends(cfg_clone));
-        // });
-        //
-        // std::thread::spawn(move || {
-        //     tokio::runtime::Runtime::new()
-        //         .unwrap()
-        //         .block_on(run_proxy(config));
-        // });
     });
     // sleep to give servers time to setup
     std::thread::sleep(Duration::from_secs(5));
