@@ -1,7 +1,7 @@
 use std::{
     collections::HashSet,
     fs,
-    net::SocketAddr,
+    net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
     process::Command,
     time::Duration,
@@ -182,7 +182,7 @@ impl Default for ServiceConfig {
 }
 
 /// parses command line arguments and the porto.toml config file
-#[instrument(err)]
+#[instrument]
 pub fn setup_config(cli_args: Option<&RunArgs>) -> Result<PortoConfig> {
     if let Some(cli) = cli_args {
         let path = search_config_path(cli.config.as_deref())?;
@@ -195,11 +195,15 @@ pub fn setup_config(cli_args: Option<&RunArgs>) -> Result<PortoConfig> {
         }
 
         if config.global.bind.is_none() {
-            // TODO: if there is no bind, bind to 0.0.0.0:80 or 443 ?
-            return Err(anyhow!(
-                "No listening address provided! Either pass a address as argument or set \"bind = [ADDR]\" inside the config."
-            ));
+            if config.tls.enabled {
+                config.global.bind = Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 443))
+            } else {
+                config.global.bind = Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 80))
+            }
         }
+
+        info!("attempting to bind to {}", config.global.bind.expect("something is there at this point"));
+
         Ok(config)
     } else {
         let path = search_config_path(None)?;

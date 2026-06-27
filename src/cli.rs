@@ -36,6 +36,10 @@ pub struct RunArgs {
     /// Starts the server in the background
     #[arg(short, default_value_t = false)]
     pub background: bool,
+
+    /// Runs Porto in debug mode
+    #[arg(short, default_value_t = false)]
+    pub debug: bool,
 }
 
 #[derive(Args, Debug)]

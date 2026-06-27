@@ -138,6 +138,7 @@ where
         Box::pin(async move {
             debug!(%addr, "dialing new upstream connection");
 
+            // OPTIMIZE: get rid of timers
             let t = Instant::now();
             let stream = svc.call(addr).await.map_err(Into::into)?;
             let (sender, conn) =

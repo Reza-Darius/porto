@@ -123,12 +123,12 @@ where
 
     // we use a cache to dynamically open new connections in a pool
     let http1 = ServiceBuilder::new()
+        .concurrency_limit(pool.config.max_http1_in_flight as usize) // limits the amount of in-flight handshakes
         .layer_fn(|svc| {
             hyper_util::client::pool::cache::builder()
                 .executor(hyper_util::rt::TokioExecutor::new())
                 .build(svc)
         })
-        .concurrency_limit(pool.config.max_http1_in_flight as usize) // limits the amount of in-flight handshakes
         .layer_fn(|con| Http1Connect::new(pool.config.max_http1_con as usize, con))
         .service(UpstreamConnector::new());
 
@@ -142,13 +142,13 @@ where
         timeout_check.tick().await;
         loop {
             timeout_check.tick().await;
-            if worker_clone.is_empty() {
+            if worker_clone.get_mut().is_empty() {
                 debug!(%addr, "removing HTTP1 client");
                 handle.lock().remove(&addr);
                 return;
             }
             let now = Instant::now();
-            worker_clone.retain(|sender| {
+            worker_clone.get_mut().retain(|sender| {
                 if sender.sender.is_closed() {
                     return false;
                 }

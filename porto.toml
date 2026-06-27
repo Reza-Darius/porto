@@ -1,17 +1,14 @@
 [global]
 bind = "127.0.0.1:3000"
-limit = true
+limit = false
 
 [tls]
 tls = true
 auto_cert = false
-cert_path = "/home/darius/Projects/porto/credentials/testpeer.com+3.pem"
-key_path = "/home/darius/Projects/porto/credentials/testpeer.com+3-key.pem"
+cert_path = "/credentials/_wildcard.local.porto.pem"
+key_path = "/credentials/_wildcard.local.porto-key.pem"
 
 [[proxy]]
-domain = "testpeer.com"
+domain = "darius.local.porto"
 upstream = "127.0.0.2:8000"
 
-[[proxy]]
-domain = "testpeeruds.com"
-upstream = "/tmp/test_peer.sock"

@@ -1,14 +1,12 @@
-server_addr := "127.0.0.1:3000"
-
 cap:
     sudo setcap 'cap_net_bind_service=+ep' ./target/server
     sudo setcap 'cap_net_bind_service=+ep' ./debug/server
 
-sr:
-    cargo run --release --bin server -- {{ server_addr }} 
+build-server:
+    cargo build --release --bin porto
 
-s:
-    cargo run --bin server -- {{ server_addr }} 
+sr: build-server
+    ./target/release/porto start -c .
 
 pr:
     cargo run --release --bin peer
@@ -16,11 +14,8 @@ pr:
 p:
     cargo run --bin peer
 
-c:
-    curl --resolve testpeer.com:4000:127.0.0.1 \
-      https://testpeer.com:4000/ \
-      -H "Accept-Encoding: gzip" \
-      -v
-
 t:
     cargo test --test service-test -- --show-output
+
+install: build-server
+    sudo install -o root -g root -m 755 target/release/porto /usr/local/bin/porto

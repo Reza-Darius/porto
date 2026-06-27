@@ -1,5 +1,5 @@
 use std::{
-    convert::Infallible, fmt::format, fs::Permissions, os::unix::fs::PermissionsExt, path::Path,
+    convert::Infallible, fs::Permissions, os::unix::fs::PermissionsExt, path::Path,
     process::Command,
 };
 
@@ -43,7 +43,7 @@ pub fn setup_ctrl_sock(path: impl AsRef<Path>) -> Result<Receiver<CtrlMsg>> {
         )
     })?;
 
-    let (ctrl_tx, ctrl_rx) = tokio::sync::mpsc::channel::<CtrlMsg>(1024);
+    let (ctrl_tx, ctrl_rx) = tokio::sync::mpsc::channel::<CtrlMsg>(64);
 
     tokio::spawn(async move {
         let svc = CtrlService::new(ctrl_tx);

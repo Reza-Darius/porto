@@ -1,13 +1,13 @@
 [global]
 # optional: address to listen on, will default to 0.0.0.0:80 or 0.0.0.0:443, depending on TLS settings
-bind = "127.0.0.1:3000"
+# bind = "127.0.0.1:3000"
 
 # enables the global rate limiter, default = true
 limit = true
 
 [tls]
-# toggles HTTPS, default = true
-tls = true
+# optional: toggles HTTPS, default = true
+# tls = false
 
 # optional: enables ACME for automatic certificates, default = false
 auto_cert = false
@@ -26,4 +26,4 @@ domain = "mywebsite.com"
 upstream = "127.0.0.1:6767"
 
 # optional: enable HTTP2 if the backend supports it, default = false
-http2 = true
+# http2 = true
