@@ -5,8 +5,11 @@ cap:
 build-server:
     cargo build --release --bin porto
 
+s:
+    cargo run -- start -c . -d
+
 sr: build-server
-    ./target/release/porto start -c .
+    ./target/release/porto start -c . -d
 
 pr:
     cargo run --release --bin peer
@@ -19,3 +22,4 @@ t:
 
 install: build-server
     sudo install -o root -g root -m 755 target/release/porto /usr/local/bin/porto
+    sudo systemctl restart porto

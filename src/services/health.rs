@@ -174,7 +174,7 @@ impl HealthService {
             .body(empty())
             .expect("the values are hard coded");
 
-        req.extensions_mut().insert(peer.addr().clone());
+        req.extensions_mut().insert(peer.clone());
 
         tokio::select! {
             res = self.client.call(req) => {

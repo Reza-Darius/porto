@@ -64,6 +64,7 @@ where
         let client = self.client.clone();
 
         UpstreamResponseFuture {
+            peer: Some(req.extensions().get::<Peer>().cloned().unwrap()),
             f: client.request(req),
         }
     }
@@ -71,6 +72,7 @@ where
 
 pin_project! {
     pub struct UpstreamResponseFuture {
+        peer: Option<Peer>,
         #[pin]
         f: ResponseFuture
     }
@@ -85,14 +87,17 @@ impl Future for UpstreamResponseFuture {
     ) -> std::task::Poll<Self::Output> {
         let this = self.project();
 
-        // let t = Instant::now();
         let r = match std::task::ready!(this.f.poll(cx)) {
             Ok(resp) => {
-                // debug!(
-                //     elapsed_ms = t.elapsed().as_millis(),
-                //     "forwarded message time"
-                // );
-                Ok(resp.map(|r| r.map_err(Into::into).boxed_unsync()))
+                tracing::debug!("got response from backend: {:?}", resp);
+
+                // map body
+                let mut resp = resp.map(|r| r.map_err(Into::into).boxed_unsync());
+
+                assert!(this.peer.is_some());
+                resp.extensions_mut().insert(this.peer.take());
+
+                Ok(resp)
             }
             Err(e) => {
                 error!(?e, "couldnt send request");
@@ -102,4 +107,3 @@ impl Future for UpstreamResponseFuture {
         std::task::Poll::Ready(r)
     }
 }
-

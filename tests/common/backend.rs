@@ -90,7 +90,7 @@ async fn health() -> StatusCode {
 }
 
 async fn comp() -> Response {
-    let body = "this is a response body".repeat(10);
+    let body = "this is a response body".repeat(20);
     eprintln!("pre-compressed body length {} bytes", body.len());
     Response::builder()
         .status(StatusCode::OK)

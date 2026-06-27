@@ -50,6 +50,7 @@ impl RouteTable {
         }
     }
     pub fn init(config: &PortoConfig) -> Self {
+        assert!(config.has_proxies());
         let table = RouteTable {
             inner: Arc::new(RouteTableInner {
                 peers: Mutex::new(config.get_proxies().collect()),

@@ -4,11 +4,8 @@ use http_body_util::BodyExt;
 use hyper::StatusCode;
 use tower::{ServiceBuilder, ServiceExt};
 use tower_http::{
-    catch_panic::CatchPanicLayer,
-    limit::RequestBodyLimitLayer,
-    normalize_path::NormalizePathLayer,
-    timeout::TimeoutLayer,
-    trace::TraceLayer,
+    catch_panic::CatchPanicLayer, limit::RequestBodyLimitLayer, normalize_path::NormalizePathLayer,
+    timeout::TimeoutLayer, trace::TraceLayer,
 };
 
 use crate::{
@@ -20,9 +17,7 @@ use crate::{
         ratelimit::RateLimitLayer,
         req_validation::RequestValidationLayer,
         setup_health_service,
-        upstream::
-            connection_table::{ConnectionConfig, ConnectionService}
-        ,
+        upstream::{connection_table::{ConnectionConfig, ConnectionService}, hyper_client},
     },
     utils::{HyperService, RouteTable, handle_panic},
 };
@@ -67,6 +62,7 @@ pub fn setup_service4(config: &PortoConfig) -> HyperService {
         .layer_fn(setup_response_compresson)
         .layer(NormalizePathLayer::trim_trailing_slash())
         .layer(AddrServiceLayer::new(peers))
+        // .service(hyper_client::UpstreamService::new())
         .service(ConnectionService::new(ConnectionConfig::default()))
         // using a BoxError breaks the whole thing and i cant figure out why
         .map_err(anyhow::Error::from_boxed)

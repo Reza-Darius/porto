@@ -131,7 +131,7 @@ where
         let permit = self
             .permit
             .take()
-            .expect("dont call this without calling poll ready first");
+            .expect("http1connector: dont call this without calling poll_ready first");
         let n_connections = self.n_connections.clone();
         let mut svc = svc_clone(&mut self.inner);
 

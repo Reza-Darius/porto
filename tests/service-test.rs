@@ -86,7 +86,7 @@ async fn compression() {
     adjust_settings(&mut config);
 
     let client = get_client(DOMAINS, config.addr());
-
+    eprintln!("{:?}", &config);
     setup_test_server(Arc::new(config));
 
     let res = client
@@ -96,6 +96,7 @@ async fn compression() {
         .await
         .expect("the backend is available and should respond");
 
+    eprintln!("response: {:?}", res);
     assert_eq!(res.headers()["content-encoding"], "gzip");
     let body = res.bytes().await.unwrap();
     eprintln!("body length: {} bytes", body.len());

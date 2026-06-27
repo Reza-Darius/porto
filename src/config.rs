@@ -97,6 +97,10 @@ impl PortoConfig {
     pub fn add_proxy(&mut self, proxy: ProxyConfig) {
         self.proxy.push(proxy);
     }
+
+    pub fn has_proxies(&self) -> bool {
+        !self.proxy.is_empty()
+    }
 }
 
 impl From<ProxyConfig> for Peer {
@@ -182,7 +186,7 @@ impl Default for ServiceConfig {
 }
 
 /// parses command line arguments and the porto.toml config file
-#[instrument]
+#[instrument(skip_all)]
 pub fn setup_config(cli_args: Option<&RunArgs>) -> Result<PortoConfig> {
     if let Some(cli) = cli_args {
         let path = search_config_path(cli.config.as_deref())?;
@@ -196,13 +200,29 @@ pub fn setup_config(cli_args: Option<&RunArgs>) -> Result<PortoConfig> {
 
         if config.global.bind.is_none() {
             if config.tls.enabled {
-                config.global.bind = Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 443))
+                config.global.bind =
+                    Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 443))
             } else {
-                config.global.bind = Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 80))
+                config.global.bind =
+                    Some(SocketAddr::new(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)), 80))
             }
         }
 
-        info!("attempting to bind to {}", config.global.bind.expect("something is there at this point"));
+        if cli.debug {
+            let sock_path = PathBuf::from("/tmp/porto-debug.sock");
+            if sock_path.exists() {
+                std::fs::remove_file(&sock_path)?;
+            }
+            config.internal.ctrl_sock_path = sock_path;
+        }
+
+        info!(
+            "attempting to bind to {}",
+            config
+                .global
+                .bind
+                .expect("something is there at this point")
+        );
 
         Ok(config)
     } else {

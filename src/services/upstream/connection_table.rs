@@ -10,7 +10,7 @@ use http::{Request, Response, StatusCode, Version};
 use hyper_util::client::pool::singleton::Singleton;
 use parking_lot::Mutex;
 use tower::{BoxError, Service, ServiceBuilder, ServiceExt, service_fn, util::BoxCloneService};
-use tracing::debug;
+use tracing::{debug, error};
 
 use super::{
     connector::UpstreamConnector,
@@ -110,7 +110,6 @@ where
 /// calling this service sends a request over HTTP
 type HttpClient<B> = BoxCloneService<Request<B>, Response<Body>, BoxError>;
 
-/// register a new HTTP1 client
 fn new_http1_client<B>(addr: PeerAddr, pool: &ConnectionService<B>) -> HttpClient<B>
 where
     B: hyper::body::Body + Send + 'static,
@@ -123,12 +122,12 @@ where
 
     // we use a cache to dynamically open new connections in a pool
     let http1 = ServiceBuilder::new()
-        .concurrency_limit(pool.config.max_http1_in_flight as usize) // limits the amount of in-flight handshakes
         .layer_fn(|svc| {
             hyper_util::client::pool::cache::builder()
                 .executor(hyper_util::rt::TokioExecutor::new())
                 .build(svc)
         })
+        .concurrency_limit(pool.config.max_http1_in_flight as usize) // limits the amount of in-flight handshakes
         .layer_fn(|con| Http1Connect::new(pool.config.max_http1_con as usize, con))
         .service(UpstreamConnector::new());
 
@@ -142,13 +141,13 @@ where
         timeout_check.tick().await;
         loop {
             timeout_check.tick().await;
-            if worker_clone.get_mut().is_empty() {
+            if worker_clone.is_empty() {
                 debug!(%addr, "removing HTTP1 client");
                 handle.lock().remove(&addr);
                 return;
             }
             let now = Instant::now();
-            worker_clone.get_mut().retain(|sender| {
+            worker_clone.retain(|sender| {
                 if sender.sender.is_closed() {
                     return false;
                 }
@@ -159,7 +158,7 @@ where
 
     // wrapper service to avoide double service calls and because "Cache" isnt nameable
     let http1 = service_fn(move |req: Request<_>| {
-        let mut http1_svc = http1.clone();
+        let http1_svc = http1.clone();
         async move {
             debug!("calling connector");
             let peer = req
@@ -168,28 +167,32 @@ where
                 .cloned()
                 .ok_or_else(|| anyhow!("PeerAddr extension not found"))?;
 
-            let Ok(mut sender) = http1_svc
-                .ready() // important to call ready here, otherwise the worker panics
-                .await?
-                .call(peer.addr().clone()) // call pool
+            let Ok(sender) = http1_svc
+                .oneshot(peer.addr().clone())
+                // .ready() // important to call ready here, otherwise the worker panics
+                // .await
+                // .inspect_err(|e| error!(%e, "error when checking readiness on cache", ))?
+                // .call(peer.addr().clone()) // call pool
                 .await
-                .inspect_err(|e| tracing::error!(%e, "couldnt get sender"))
+                .inspect_err(|e| error!(%e, "error when calling pool"))
             else {
                 return Ok::<Response<Body>, BoxError>(response(StatusCode::INTERNAL_SERVER_ERROR));
             };
 
             debug!("sending request");
             sender
-                .ready()
-                .await?
-                .call(req)
+                .oneshot(req)
+                // .ready()
+                // .await
+                // .inspect_err(|e| error!(%e, "error when checking readiness on cached sender", ))?
+                // .call()
                 .await
                 .map(|mut resp| {
                     resp.extensions_mut().insert(peer);
                     resp
                 })
                 .or_else(|e| {
-                    tracing::error!(%e, "sending failed");
+                    error!(%e, "sending failed");
                     Ok(response(StatusCode::INTERNAL_SERVER_ERROR))
                 })
         }

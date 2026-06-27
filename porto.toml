@@ -5,8 +5,8 @@ limit = false
 [tls]
 tls = true
 auto_cert = false
-cert_path = "/credentials/_wildcard.local.porto.pem"
-key_path = "/credentials/_wildcard.local.porto-key.pem"
+cert_path = "credentials/_wildcard.local.porto.pem"
+key_path = "credentials/_wildcard.local.porto-key.pem"
 
 [[proxy]]
 domain = "darius.local.porto"
