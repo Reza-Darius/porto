@@ -10,7 +10,7 @@ pub fn get_client(domains: &[&'static str], proxy_addr: SocketAddr) -> reqwest::
         proxy: proxy_addr,
         set: domains.iter().copied().collect(),
     };
-    ClientBuilder::new().http1_only().dns_resolver(resolver).build().unwrap()
+    ClientBuilder::new().dns_resolver(resolver).build().unwrap()
 }
 
 struct TestResolver {

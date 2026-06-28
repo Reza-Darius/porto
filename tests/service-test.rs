@@ -20,17 +20,24 @@ use crate::common::*;
 const DOMAINS: &[&str] = &["testpeer.com", "testpeeruds.com", "rezadarius.de"];
 const BACKENDS: &[&str] = &["127.0.0.2:8000", "127.0.0.3:8000", "/tmp/test_peer.sock"];
 
-fn adjust_settings(config: &mut PortoConfig) {
+fn setup() -> reqwest::Client {
+    let mut config = setup_test_config(DOMAINS, BACKENDS);
+
+    // for rate limit test
+    config.global.limit = true;
+
+    // make sure we dont get an error trying to bind to the socket in /run/
     config.internal.ctrl_sock_path = PathBuf::from("/tmp/porto-test-sock");
+
+    let client = get_client(DOMAINS, config.addr());
+
+    setup_test_server(Arc::new(config));
+    client
 }
 
 #[test(tokio::test)]
 async fn proxying() {
-    let mut config = setup_test_config(DOMAINS, BACKENDS);
-    let client = get_client(DOMAINS, config.addr());
-
-    adjust_settings(&mut config);
-    setup_test_server(Arc::new(config));
+    let client = setup();
 
     for domain in DOMAINS.iter() {
         info!("trying to ping {domain}");
@@ -44,16 +51,10 @@ async fn proxying() {
 
 #[test(tokio::test)]
 async fn rate_limit() {
-    let mut config = setup_test_config(DOMAINS, BACKENDS);
-    adjust_settings(&mut config);
-    config.global.limit = true;
-
-    let client = get_client(DOMAINS, config.addr());
+    let client = setup();
 
     // TODO: get rid of this hard coded value
     let bucket_size = 10;
-
-    setup_test_server(Arc::new(config));
 
     let send = async || {
         client
@@ -82,12 +83,7 @@ async fn rate_limit() {
 
 #[test(tokio::test)]
 async fn compression() {
-    let mut config = setup_test_config(DOMAINS, BACKENDS);
-    adjust_settings(&mut config);
-
-    let client = get_client(DOMAINS, config.addr());
-    eprintln!("{:?}", &config);
-    setup_test_server(Arc::new(config));
+    let client = setup();
 
     let res = client
         .get(format!("https://{}/comp", &DOMAINS[0]))

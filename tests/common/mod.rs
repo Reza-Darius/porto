@@ -1,4 +1,3 @@
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::{Arc, Once};
@@ -17,7 +16,7 @@ pub mod proxy;
 
 const CERT_PATH: &str = "credentials/testpeer.com+3.pem";
 const KEY_PATH: &str = "credentials/testpeer.com+3-key.pem";
-const PROXY_ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 4000);
+const PROXY_ADDR: &str = "127.0.0.1:4000";
 
 pub static INIT: Once = Once::new();
 
@@ -25,7 +24,7 @@ pub fn setup_test_config(domains: &[&str], backends: &[&str]) -> PortoConfig {
     assert!(domains.len() == backends.len());
 
     let mut config = PortoConfig::default();
-    config.global.bind = Some(PROXY_ADDR);
+    config.global.bind = Some(PROXY_ADDR.parse().unwrap());
     config.tls.cert_path = Some(PathBuf::from_str(CERT_PATH).unwrap());
     config.tls.key_path = Some(PathBuf::from_str(KEY_PATH).unwrap());
 
