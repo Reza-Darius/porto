@@ -95,5 +95,5 @@ For some very unscientific tests i used [oha](https://github.com/hatoo/oha) to s
 ```
 porto: 460k requests/second, avg latency: 0.4ms
 caddy: 115k requests/second, avg latency: 1.7ms
-nginx: 14k requests/second, avg latency: 14ms
+nginx: 23k requests/second, avg latency: 14ms
 ```
