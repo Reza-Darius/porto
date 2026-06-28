@@ -1,7 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
 use http::StatusCode;
-use porto::config::PortoConfig;
 use test_log::test;
 
 mod common;
