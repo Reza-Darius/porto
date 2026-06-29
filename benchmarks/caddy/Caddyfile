@@ -1,0 +1,10 @@
+{
+  admin off
+	auto_https off
+}
+
+darius.local.porto:4000 {
+	bind 127.0.0.1
+	tls ../../credentials/_wildcard.local.porto.pem ../../credentials/_wildcard.local.porto-key.pem
+	reverse_proxy 127.0.0.2:8000
+}

@@ -36,7 +36,8 @@ pub fn setup_ctrl_sock(path: impl AsRef<Path>) -> Result<Receiver<CtrlMsg>> {
     let socket = UnixListener::bind(&path)
         .with_context(|| format!("ctrl socket bind error at {}", path.display()))?;
 
-    std::fs::set_permissions(&path, Permissions::from_mode(0o660)).with_context(|| {
+    // OPTIMIZE: permissions for the ctrl socket should be gated behind sudo
+    std::fs::set_permissions(&path, Permissions::from_mode(0o666)).with_context(|| {
         format!(
             "failed to set permissions on ctrl socket at {}",
             path.display()

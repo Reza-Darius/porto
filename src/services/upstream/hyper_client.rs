@@ -37,7 +37,6 @@ where
         let client = Client::builder(hyper_util::rt::TokioExecutor::new())
             .pool_idle_timeout(std::time::Duration::from_secs(30))
             .pool_timer(TokioTimer::new())
-            .pool_max_idle_per_host(40)
             .build(UpstreamConnector::new());
         Self { client }
     }

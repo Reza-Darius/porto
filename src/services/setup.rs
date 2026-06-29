@@ -62,8 +62,8 @@ pub fn setup_service4(config: &PortoConfig) -> HyperService {
         .layer_fn(setup_response_compresson)
         .layer(NormalizePathLayer::trim_trailing_slash())
         .layer(AddrServiceLayer::new(peers))
-        // .service(hyper_client::UpstreamService::new())
-        .service(ConnectionService::new(ConnectionConfig::default()))
+        .service(hyper_client::UpstreamService::new())
+        // .service(ConnectionService::new(ConnectionConfig::default()))
         // using a BoxError breaks the whole thing and i cant figure out why
         .map_err(anyhow::Error::from_boxed)
         .map_response(|resp: http::Response<_>| resp.map(|body| body.boxed_unsync()))
