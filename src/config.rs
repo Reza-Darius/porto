@@ -64,11 +64,12 @@ pub struct RateLimitSettings {
     pub refill_interval: Duration,
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for GlobalSettings {
     fn default() -> Self {
         GlobalSettings {
             bind: None,
-            limit: true,
+            limit: false,
         }
     }
 }

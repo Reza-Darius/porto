@@ -2,8 +2,8 @@
 # optional: address to listen on, will default to 0.0.0.0:80 or 0.0.0.0:443, depending on TLS settings
 # bind = "127.0.0.1:3000"
 
-# enables the global rate limiter, default = true
-limit = true
+# enables the global rate limiter, default = false
+# limit = true
 
 [tls]
 # optional: toggles HTTPS, default = true
