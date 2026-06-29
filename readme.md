@@ -81,7 +81,6 @@ upstream = "127.0.0.10:4000"
 
 # optional settings
 http2 = true
-rate_limit_enable = false
 
 [[proxy]]
 domain = "GolangIsCoolToo.com"
