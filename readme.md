@@ -5,6 +5,7 @@ An easy to use and fast reverse proxy with TLS termination!
 ## Features
 
 - Custom connection pool for blazingly fast performance
+- Small memory footprint
 - Proxying to UDS and TCP sockets
 - HTTPS support with rustls
 - ACME support for automatic certificate renewal (experimental)
@@ -56,8 +57,11 @@ To stop the server run either `porto stop` or `systemctl stop porto`
 ## Config file details
 
 ```toml
+[global]
 # address for Porto to listen on
 bind = "127.0.0.1:3000"
+# enables global rate limiting, default = false
+limit = true
 
 [tls]
 tls = true
