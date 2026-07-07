@@ -11,8 +11,11 @@ use axum::{
 };
 use http::StatusCode;
 use http::header::CACHE_CONTROL;
-use hyper::server::conn::http1;
-use hyper_util::{rt::TokioIo, service::TowerToHyperService};
+use hyper_util::{
+    rt::{TokioExecutor, TokioIo},
+    server::conn::auto::Builder,
+    service::TowerToHyperService,
+};
 use porto::{config::PortoConfig, utils::PeerAddr};
 use tokio::task::JoinSet;
 use tower::Service;
@@ -44,7 +47,7 @@ pub async fn run_backends(config: Arc<PortoConfig>) {
 
                         let svc = TowerToHyperService::new(route.clone());
                         tokio::task::spawn(async move {
-                            if let Err(err) = http1::Builder::new()
+                            if let Err(err) = Builder::new(TokioExecutor::new())
                                 .serve_connection(TokioIo::new(stream), svc)
                                 .await
                             {

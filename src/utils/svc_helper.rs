@@ -158,3 +158,16 @@ where
         }
     }
 }
+
+// type ResponseBody<B> = http_body_util::Either<B, http_body_util::Full<bytes::Bytes>>;
+//
+// fn map_ok<B>(res: Response<B>) -> Response<ResponseBody<B>> {
+//     res.map(http_body_util::Either::Left)
+// }
+//
+// fn error_response<B>(status: StatusCode, body: &'static str) -> Response<ResponseBody<B>> {
+//     Response::builder()
+//         .status(status)
+//         .body(http_body_util::Either::Right(http_body_util::Full::from(body)))
+//         .unwrap()
+// }

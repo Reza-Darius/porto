@@ -24,7 +24,7 @@ impl Predicate for PeerCompSettings {
         if let Some(peer) = response.extensions().get::<Peer>() {
             peer.config().comp
         } else {
-            false
+            panic!("no peer info found on response")
         }
     }
 }

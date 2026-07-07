@@ -7,6 +7,7 @@ use hyper_util::rt::TokioTimer;
 use pin_project_lite::pin_project;
 use tower::{BoxError, Service};
 use tracing::error;
+use tracing::debug;
 
 use super::connector::UpstreamConnector;
 use crate::utils::*;
@@ -93,8 +94,7 @@ impl Future for UpstreamResponseFuture {
                 // map body
                 let mut resp = resp.map(|r| r.map_err(Into::into).boxed_unsync());
 
-                assert!(this.peer.is_some());
-                resp.extensions_mut().insert(this.peer.take());
+                resp.extensions_mut().insert(this.peer.take().expect("peer info needs to be there"));
 
                 Ok(resp)
             }
