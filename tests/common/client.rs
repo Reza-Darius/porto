@@ -5,12 +5,19 @@ use axum::BoxError;
 use reqwest::{ClientBuilder, dns::Resolve};
 
 /// provided a client that resolves every domain to the proxy adress
-pub fn get_client(domains: &[&'static str], proxy_addr: SocketAddr) -> reqwest::Client {
+pub fn get_client(
+    domains: impl Iterator<Item = &'static str>,
+    proxy_addr: SocketAddr,
+) -> reqwest::Client {
     let resolver = TestResolver {
         proxy: proxy_addr,
-        set: domains.iter().copied().collect(),
+        set: domains.collect(),
     };
-    ClientBuilder::new().http1_only().dns_resolver(resolver).build().unwrap()
+    ClientBuilder::new()
+        .http1_only()
+        .dns_resolver(resolver)
+        .build()
+        .unwrap()
 }
 
 struct TestResolver {

@@ -20,18 +20,17 @@ const PROXY_ADDR: &str = "127.0.0.1:4000";
 
 pub static INIT: Once = Once::new();
 
-pub fn setup_test_config(domains: &[&str], backends: &[&str]) -> PortoConfig {
-    assert!(domains.len() == backends.len());
+pub fn setup_test_config(proxies: &[(&str, &str)]) -> PortoConfig {
 
     let mut config = PortoConfig::default();
     config.global.bind = Some(PROXY_ADDR.parse().unwrap());
     config.tls.cert_path = Some(PathBuf::from_str(CERT_PATH).unwrap());
     config.tls.key_path = Some(PathBuf::from_str(KEY_PATH).unwrap());
 
-    for i in 0..domains.len() {
+    for (domain, addr) in proxies.iter() {
         config.add_proxy(ProxyConfig {
-            domain: Domain::parse(domains[i]).unwrap(),
-            upstream: PeerAddr::parse(backends[i]).unwrap(),
+            domain: Domain::parse(domain).unwrap(),
+            upstream: PeerAddr::parse(addr).unwrap(),
             http2: false,
             config: Default::default(),
         });

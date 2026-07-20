@@ -16,11 +16,14 @@ use crate::common::*;
 
 // WARNING: configs are kinda broken because the servers run with the first config that spawns them
 
-const DOMAINS: &[&str] = &["testpeer.com", "testpeeruds.com", "rezadarius.de"];
-const BACKENDS: &[&str] = &["127.0.0.2:8000", "127.0.0.3:8000", "/tmp/test_peer.sock"];
+const PROXIES: &[(&str, &str)] = &[
+    ("testpeer.com", "127.0.0.2:8000"),
+    ("testpeeruds.com", "127.0.0.3:8000"),
+    ("rezadarius.de", "/tmp/test_peer.sock"),
+];
 
 fn setup() -> reqwest::Client {
-    let mut config = setup_test_config(DOMAINS, BACKENDS);
+    let mut config = setup_test_config(PROXIES);
 
     // for rate limit test
     config.global.limit = true;
@@ -28,7 +31,7 @@ fn setup() -> reqwest::Client {
     // make sure we dont get an error trying to bind to the socket in /run/
     config.internal.ctrl_sock_path = PathBuf::from("/tmp/porto-test-sock");
 
-    let client = get_client(DOMAINS, config.addr());
+    let client = get_client(PROXIES.iter().map(|(domain, _)| *domain), config.addr());
 
     setup_test_server(Arc::new(config));
     client
@@ -38,7 +41,7 @@ fn setup() -> reqwest::Client {
 async fn proxying() {
     let client = setup();
 
-    for domain in DOMAINS.iter() {
+    for (domain, _) in PROXIES.iter() {
         info!("trying to ping {domain}");
         client
             .get(format!("https://{}/", domain))
@@ -57,7 +60,7 @@ async fn rate_limit() {
 
     let send = async || {
         client
-            .get(format!("https://{}/", &DOMAINS[0]))
+            .get(format!("https://{}/", PROXIES[0].0))
             .send()
             .await
             .expect("the backend is available and should respond")
@@ -76,7 +79,7 @@ async fn rate_limit() {
 
     let resp = send().await;
 
-    eprintln!("got response {:?}", &resp);
+    eprintln!("got response {:?}", resp);
     assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
 }
 
@@ -85,7 +88,7 @@ async fn compression() {
     let client = setup();
 
     let res = client
-        .get(format!("https://{}/comp", &DOMAINS[0]))
+        .get(format!("https://{}/comp", PROXIES[0].0))
         .header(http::header::ACCEPT_ENCODING, "gzip")
         .send()
         .await
