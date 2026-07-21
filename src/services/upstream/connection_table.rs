@@ -16,7 +16,9 @@ use super::{
     connector::UpstreamConnector,
     http::{Http1Connect, Http2Connect},
 };
-use crate::utils::{Body, Peer, PeerAddr, SvcBoxFut, boxfut_err, response};
+use crate::utils::{ Peer, PeerAddr};
+
+use tower_http_utils::*;
 
 pub struct ConnectionService<B> {
     table: Arc<Mutex<HashMap<PeerAddr, HttpClient<B>>>>,

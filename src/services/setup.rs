@@ -7,6 +7,7 @@ use tower_http::{
     catch_panic::CatchPanicLayer, limit::RequestBodyLimitLayer, normalize_path::NormalizePathLayer,
     timeout::TimeoutLayer, trace::TraceLayer,
 };
+use tower_http_utils::{HyperService, handle_panic};
 
 use crate::{
     config::PortoConfig,
@@ -17,9 +18,12 @@ use crate::{
         ratelimit::RateLimitLayer,
         req_validation::RequestValidationLayer,
         setup_health_service,
-        upstream::{connection_table::{ConnectionConfig, ConnectionService}, hyper_client},
+        upstream::{
+            connection_table::{ConnectionConfig, ConnectionService},
+            hyper_client,
+        },
     },
-    utils::{HyperService, RouteTable, handle_panic},
+    utils::RouteTable,
 };
 
 pub fn setup_service4(config: &PortoConfig) -> HyperService {

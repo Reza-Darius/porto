@@ -7,6 +7,7 @@ use hyper_util::rt::TokioExecutor;
 use hyper_util::server::conn::auto::Builder;
 use hyper_util::server::graceful::Watcher;
 use hyper_util::{rt::TokioIo, service::TowerToHyperService};
+use tower_http_utils::HyperService;
 use std::time::Instant;
 use tap::Pipe;
 use tokio::net::TcpStream;

@@ -5,11 +5,11 @@ use http::request::Parts;
 use http::{Uri, header};
 use hyper::header::HOST;
 use hyper::header::HeaderValue;
-use hyper::{HeaderMap, Request, Response, StatusCode, Version};
+use hyper::{HeaderMap, Request, Version};
 use tokio::net::unix::UCred;
 use tracing::debug;
 
-use crate::utils::{Body, PeerAddr, empty};
+use crate::utils::PeerAddr;
 
 #[derive(Clone, Debug)]
 #[allow(dead_code)]

@@ -4,6 +4,7 @@ use http::Version;
 use hyper::{Request, Response, StatusCode};
 use pin_project_lite::pin_project;
 use tower::Service;
+use tower_http_utils::{ResponseBodyExt, WrapBody};
 use tracing::{debug, error};
 
 use crate::utils::*;
@@ -45,7 +46,7 @@ impl<S, ReqB, ResB> Service<Request<ReqB>> for AddrService<S>
 where
     S: Service<Request<ReqB>, Response = Response<ResB>>,
 {
-    type Response = Response<ResponseBody<ResB>>;
+    type Response = Response<WrapBody<ResB>>;
     type Error = S::Error;
     type Future = AddrFuture<S::Future>;
 
@@ -128,7 +129,7 @@ impl<F, E, ResB> Future for AddrFuture<F>
 where
     F: Future<Output = Result<Response<ResB>, E>>,
 {
-    type Output = Result<Response<ResponseBody<ResB>>, E>;
+    type Output = Result<Response<WrapBody<ResB>>, E>;
 
     fn poll(
         self: std::pin::Pin<&mut Self>,

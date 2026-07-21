@@ -11,9 +11,9 @@ use http::{Request, Response, StatusCode};
 use parking_lot::Mutex;
 use pin_project_lite::pin_project;
 use tower::{BoxError, Layer, Service};
+use tower_http_utils::{ResponseBodyExt, WrapBody};
 use tracing::{debug, warn};
 
-use crate::utils::{ResponseBody, ResponseExt};
 
 const BUCKET_SIZE: u16 = 10;
 const REFILL_INTERVAL: Duration = Duration::from_mins(1);
@@ -172,7 +172,7 @@ where
     S: Service<Request<ReqB>, Response = Response<ResB>>,
     S::Error: Into<BoxError>,
 {
-    type Response = Response<ResponseBody<ResB>>;
+    type Response = Response<WrapBody<ResB>>;
     type Error = BoxError;
     type Future = RateLimitFuture<S::Future>;
 
@@ -218,7 +218,7 @@ where
     F: Future<Output = Result<Response<ResB>, E>>,
     E: Into<BoxError>,
 {
-    type Output = Result<Response<ResponseBody<ResB>>, BoxError>;
+    type Output = Result<Response<WrapBody<ResB>>, BoxError>;
 
     fn poll(
         self: std::pin::Pin<&mut Self>,
@@ -229,7 +229,7 @@ where
             EnumProj::Ok { fut } => fut
                 .poll(cx)
                 .map_err(Into::into)
-                .map(|f| f.map(|resp| resp.map(ResponseBody::wrap))),
+                .map(|res| res.map(|resp| resp.map_body())),
             EnumProj::RateLimited => Poll::Ready(Ok(Response::build(StatusCode::TOO_MANY_REQUESTS, "too any requests"))),
             EnumProj::NoAddrFoun => Poll::Ready(Err("no addr found on request".into())),
         }

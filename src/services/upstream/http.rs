@@ -16,6 +16,8 @@ use tracing::{debug, error};
 use super::connector::Upstream;
 use crate::utils::*;
 
+use tower_http_utils::*;
+
 // this could be a larger int but eh
 static CON_ID: AtomicU16 = AtomicU16::new(0);
 

@@ -5,9 +5,10 @@ use hyper::{Request, Response, StatusCode, body::Incoming, server::conn::http1};
 use hyper_util::{rt::TokioIo, service::TowerToHyperService};
 use tokio::net::TcpListener;
 use tower::Service;
+use tower_http_utils::{Body, full, response};
 use tracing::{error, info, warn};
 
-use crate::{acme::PortoTLS, utils::*};
+use crate::acme::PortoTLS;
 
 // OPTIMIZE: setup and tear this down as needed
 pub fn setup_chall_server(addr: SocketAddr, store: PortoTLS) {

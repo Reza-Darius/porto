@@ -9,6 +9,7 @@ use http::{Method, Request, Response, StatusCode};
 use pin_project_lite::pin_project;
 use rand::RngExt;
 use tower::Service;
+use tower_http_utils::{Body, WrapBody, empty};
 use tracing::{debug, info, warn};
 
 use crate::{errors::TraceErr, services::upstream::hyper_client::UpstreamService, utils::*};
@@ -271,7 +272,7 @@ where
     S: Service<Request<ReqB>, Response = Response<RespB>>,
     S::Future: Send + 'static,
 {
-    type Response = Response<ResponseBody<RespB>>;
+    type Response = Response<WrapBody<RespB>>;
     type Error = S::Error;
     type Future = HealthEndpointFuture<S::Future>;
 
@@ -307,7 +308,7 @@ impl<F, E, RespB> Future for HealthEndpointFuture<F>
 where
     F: Future<Output = Result<Response<RespB>, E>>,
 {
-    type Output = Result<Response<ResponseBody<RespB>>, E>;
+    type Output = Result<Response<WrapBody<RespB>>, E>;
 
     fn poll(
         self: std::pin::Pin<&mut Self>,
@@ -316,10 +317,10 @@ where
         match self.project() {
             EnumProj::Inner { fut } => fut
                 .poll(cx)
-                .map(|res| res.map(|resp| resp.map(ResponseBody::wrap))),
+                .map(|res| res.map(|resp| resp.map(WrapBody::wrap))),
             EnumProj::Ok => Poll::Ready(Ok(Response::builder()
                 .status(StatusCode::OK)
-                .body(ResponseBody::empty())
+                .body(WrapBody::empty())
                 .expect("the values are hard coded"))),
         }
     }

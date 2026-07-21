@@ -6,11 +6,12 @@ use hyper_util::client::legacy::{Client, ResponseFuture};
 use hyper_util::rt::TokioTimer;
 use pin_project_lite::pin_project;
 use tower::{BoxError, Service};
+use tower_http_utils::response;
 use tracing::error;
-use tracing::debug;
 
 use super::connector::UpstreamConnector;
 use crate::utils::*;
+use tower_http_utils::alias::Body;
 
 /*
  * this upstream service uses hyper's client to talk to peers

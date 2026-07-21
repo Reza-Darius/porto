@@ -5,9 +5,9 @@ use http::{Request, Response, StatusCode};
 use pin_project_lite::pin_project;
 use thiserror::Error;
 use tower::{Layer, Service};
+use tower_http_utils::{ResponseBodyExt, WrapBody};
 use tracing::warn;
 
-use crate::utils::{ResponseBody, ResponseExt};
 
 const BODY_SIZE_LIMIT: u32 = 1 << 20; // 1 MB
 const HEADER_SIZE_LIMIT: u32 = (1 << 10) * 8; // 8 Kb
@@ -39,7 +39,7 @@ impl<S, ReqB, ResB> Service<Request<ReqB>> for ReqValidation<S>
 where
     S: Service<Request<ReqB>, Response = Response<ResB>>,
 {
-    type Response = Response<ResponseBody<ResB>>;
+    type Response = Response<WrapBody<ResB>>;
     type Error = S::Error;
     type Future = ReqValidationFuture<S::Future>;
 
@@ -89,7 +89,7 @@ impl<F, E, ResB> Future for ReqValidationFuture<F>
 where
     F: Future<Output = Result<Response<ResB>, E>>,
 {
-    type Output = Result<Response<ResponseBody<ResB>>, E>;
+    type Output = Result<Response<WrapBody<ResB>>, E>;
 
     fn poll(
         self: std::pin::Pin<&mut Self>,
@@ -100,7 +100,7 @@ where
         match this {
             EnumProj::Ok { fut } => fut
                 .poll(cx)
-                .map(|f| f.map(|resp| resp.map(ResponseBody::wrap))),
+                .map(|f| f.map(|resp| resp.map(WrapBody::wrap))),
             EnumProj::Err { e } => {
                 let status = match e {
                     ReqValidationError::HeaderSizeExceeded => {

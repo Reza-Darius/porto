@@ -1762,6 +1762,7 @@ dependencies = [
  "toml",
  "tower",
  "tower-http 0.7.0",
+ "tower-http-utils",
  "tracing",
  "tracing-subscriber",
  "url",
@@ -2755,6 +2756,21 @@ dependencies = [
  "tokio-util",
  "tower-layer",
  "tower-service",
+ "tracing",
+]
+
+[[package]]
+name = "tower-http-utils"
+version = "0.1.0"
+source = "git+https://github.com/Reza-Darius/tower-http-utils.git#e3cdb41e6741d3ba49281fd8bc30bc91e11a363a"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "http",
+ "http-body-util",
+ "hyper",
+ "pin-project-lite",
+ "tower",
  "tracing",
 ]
 

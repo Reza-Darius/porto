@@ -14,8 +14,8 @@ use tokio::{
 };
 use tracing::{debug, error, info};
 use url::Url;
+use tower_http_utils::alias::SvcBoxFut;
 
-use crate::utils::SvcBoxFut;
 
 /// the env variable provided by systemd which identifies the socket for sending sd notify signals
 const NOTIFY_SOCKET: &str = "NOTIFY_SOCKET";
