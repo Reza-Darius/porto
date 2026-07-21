@@ -18,29 +18,6 @@ struct UdsConnectInfo {
     peer_cred: UCred,
 }
 
-/// helper function to build a response
-pub fn response(status: StatusCode) -> Response<Body> {
-    Response::builder()
-        .status(status)
-        .body(empty())
-        .expect("the values are hard coded")
-}
-
-/// helper function to build a response
-pub fn bad_request() -> Response<Body> {
-    response(StatusCode::BAD_REQUEST)
-}
-
-/// helper function to build a response
-pub fn not_found() -> Response<Body> {
-    response(StatusCode::NOT_FOUND)
-}
-
-/// helper function to build a response
-pub fn internal_error() -> Response<Body> {
-    response(StatusCode::INTERNAL_SERVER_ERROR)
-}
-
 /// retrieves the targeted host from the request
 pub fn get_target_host<B>(req: &Request<B>) -> Option<&str> {
     match req.version() {

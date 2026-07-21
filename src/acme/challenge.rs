@@ -61,7 +61,7 @@ impl Service<Request<Incoming>> for Http1ChallSvc {
             .strip_prefix("/.well-known/acme-challenge/")
         else {
             warn!(uri = req.uri().path(), "unknown URI");
-            return std::future::ready(Ok(bad_request()));
+            return std::future::ready(Ok(response(StatusCode::BAD_REQUEST)));
         };
 
         info!(uri_token, "got ACME token");

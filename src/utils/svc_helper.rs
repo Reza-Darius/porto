@@ -11,8 +11,6 @@ use hyper::body::{Frame, SizeHint};
 use pin_project_lite::pin_project;
 use tower::BoxError;
 
-use crate::utils::{internal_error, response};
-
 use http::Request;
 use http_body_util::combinators::UnsyncBoxBody;
 use hyper::body::Incoming;
@@ -57,21 +55,70 @@ pub fn handle_panic(err: Box<dyn Any + Send + 'static>) -> Response<Body> {
     };
     tracing::error!(details, "request caused a panic");
 
-    internal_error()
+    response(StatusCode::INTERNAL_SERVER_ERROR)
+}
+
+/// helper function to build a response
+pub fn response(status: StatusCode) -> Response<Body> {
+    Response::builder()
+        .status(status)
+        .body(empty())
+        .expect("the values are hard coded")
 }
 
 // We create some utility functions to make Empty and Full bodies
 // fit our broadened Response body type.
 pub fn empty() -> Body {
     Empty::<Bytes>::new()
-        .map_err(|never| match never {})
+        // .map_err(|never| match never {})
+        .map_err(Into::into)
         .boxed_unsync()
 }
 
-pub fn full<T: Into<Bytes>>(chunk: T) -> Body {
-    Full::new(chunk.into())
-        .map_err(|never| match never {})
-        .boxed_unsync()
+pub fn full(chunk: impl Into<Bytes>) -> Body {
+    Full::new(chunk.into()).map_err(Into::into).boxed_unsync()
+}
+
+pub trait ResponseExt<B> {
+    /// maps a response's body to the ResponseBody wrapper type
+    fn map_body(self) -> Response<ResponseBody<B>>;
+
+    /// builds a response with a response body
+    fn build(status: StatusCode, body: impl Into<Bytes>) -> Response<ResponseBody<B>>;
+
+    /// builds a response with an empty response body
+    fn empty(status: StatusCode) -> Response<ResponseBody<B>>;
+
+    /// builds a response with an empty response body, and 200 status code
+    fn ok() -> Response<ResponseBody<B>>;
+}
+
+impl<B> ResponseExt<B> for Response<B> {
+    #[inline]
+    fn map_body(self) -> Response<ResponseBody<B>> {
+        self.map(ResponseBody::wrap)
+    }
+
+    #[inline]
+    fn build(status: StatusCode, body: impl Into<Bytes>) -> Response<ResponseBody<B>> {
+        Response::builder()
+            .status(status)
+            .body(ResponseBody::new(body))
+            .unwrap()
+    }
+
+    #[inline]
+    fn empty(status: StatusCode) -> Response<ResponseBody<B>> {
+        Response::builder()
+            .status(status)
+            .body(ResponseBody::empty())
+            .unwrap()
+    }
+
+    #[inline]
+    fn ok() -> Response<ResponseBody<B>> {
+        Response::empty(StatusCode::OK)
+    }
 }
 
 /*
@@ -79,46 +126,13 @@ pub fn full<T: Into<Bytes>>(chunk: T) -> Body {
  * response body or return a HTTP message without a boxed future
  */
 pin_project! {
-    pub struct ResponseBody<B> {
-        #[pin]
-        inner: ResponseBodyInner<B>
-    }
-}
-
-impl<B> ResponseBody<B> {
-    /// create a new body with a message
-    pub(crate) fn with_msg(str: &str) -> Self {
-        Self {
-            inner: ResponseBodyInner::Custom {
-                body: Full::from(str.to_string()).map_err(Into::into).boxed_unsync(),
-            },
-        }
-    }
-
-    /// create a empty body
-    pub(crate) fn empty() -> Self {
-        Self {
-            inner: ResponseBodyInner::Custom {
-                body: Empty::new().map_err(Into::into).boxed_unsync(),
-            },
-        }
-    }
-
-    /// wraps the body, use this if you want to pass the body unaltered
-    pub(crate) fn wrap(body: B) -> Self {
-        Self {
-            inner: ResponseBodyInner::Wrapped { body },
-        }
-    }
-}
-
-pin_project! {
     #[project = BodyProj]
-    pub enum ResponseBodyInner<B> {
-        Custom {
+    pub enum ResponseBody<B> {
+        Full {
             #[pin]
-            body: UnsyncBoxBody<Bytes, BoxError>,
+            body: Full<Bytes>,
         },
+        Empty,
         Wrapped {
             #[pin]
             body: B
@@ -126,48 +140,59 @@ pin_project! {
     }
 }
 
+impl<B> ResponseBody<B> {
+    /// create a new body data
+    pub(crate) fn new(data: impl Into<Bytes>) -> Self {
+        ResponseBody::Full {
+            body: Full::new(data.into()),
+        }
+    }
+
+    /// create a empty body
+    pub(crate) fn empty() -> Self {
+        ResponseBody::Empty
+    }
+
+    /// wraps another body, use this if you want to pass a generic body unaltered
+    pub(crate) fn wrap(body: B) -> Self {
+        ResponseBody::Wrapped { body }
+    }
+}
+
 impl<B> hyper::body::Body for ResponseBody<B>
 where
     B: hyper::body::Body<Data = Bytes>,
-    B::Error: Into<BoxError>,
 {
     type Data = Bytes;
-    type Error = BoxError;
+    type Error = B::Error;
 
+    #[inline]
     fn poll_frame(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
-        match self.project().inner.project() {
-            BodyProj::Custom { body } => body.poll_frame(cx),
-            BodyProj::Wrapped { body } => body.poll_frame(cx).map_err(Into::into),
+        match self.project() {
+            BodyProj::Full { body } => body.poll_frame(cx).map_err(|e| match e {}),
+            BodyProj::Wrapped { body } => body.poll_frame(cx),
+            BodyProj::Empty => Poll::Ready(None),
         }
     }
 
+    #[inline]
     fn is_end_stream(&self) -> bool {
-        match &self.inner {
-            ResponseBodyInner::Custom { body } => body.is_end_stream(),
-            ResponseBodyInner::Wrapped { body } => body.is_end_stream(),
+        match &self {
+            ResponseBody::Full { body } => body.is_end_stream(),
+            ResponseBody::Wrapped { body } => body.is_end_stream(),
+            ResponseBody::Empty => true,
         }
     }
 
+    #[inline]
     fn size_hint(&self) -> SizeHint {
-        match &self.inner {
-            ResponseBodyInner::Custom { body } => body.size_hint(),
-            ResponseBodyInner::Wrapped { body } => body.size_hint(),
+        match &self {
+            ResponseBody::Full { body } => body.size_hint(),
+            ResponseBody::Wrapped { body } => body.size_hint(),
+            ResponseBody::Empty => SizeHint::with_exact(0),
         }
     }
 }
-
-// type ResponseBody<B> = http_body_util::Either<B, http_body_util::Full<bytes::Bytes>>;
-//
-// fn map_ok<B>(res: Response<B>) -> Response<ResponseBody<B>> {
-//     res.map(http_body_util::Either::Left)
-// }
-//
-// fn error_response<B>(status: StatusCode, body: &'static str) -> Response<ResponseBody<B>> {
-//     Response::builder()
-//         .status(status)
-//         .body(http_body_util::Either::Right(http_body_util::Full::from(body)))
-//         .unwrap()
-// }

@@ -5,6 +5,7 @@ use std::{borrow::Borrow, sync::Arc, time::SystemTime};
 use derive_more::Display;
 use foyer::{Cache, CacheBuilder, EvictionConfig, S3FifoConfig};
 use futures::{FutureExt, TryFutureExt};
+use http::StatusCode;
 use http_body_util::BodyExt;
 use http_cache_semantics::{AfterResponse, CachePolicy};
 use hyper::{Request, Response, body::Bytes};
@@ -86,7 +87,7 @@ where
                             .map_err(Into::into)
                             .inspect_err(|e| error!(%e))
                         else {
-                            return Ok(internal_error());
+                            return Ok(response(StatusCode::INTERNAL_SERVER_ERROR));
                         };
                         let after_resp =
                             entry
@@ -136,7 +137,7 @@ where
                     .call(Request::from_parts(req_parts.clone(), req_body))
                     .await
                 else {
-                    return Ok(internal_error());
+                    return Ok(response(StatusCode::INTERNAL_SERVER_ERROR));
                 };
 
                 let new_policy = CachePolicy::new(&req_parts, &resp);

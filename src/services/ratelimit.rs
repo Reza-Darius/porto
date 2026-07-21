@@ -13,7 +13,7 @@ use pin_project_lite::pin_project;
 use tower::{BoxError, Layer, Service};
 use tracing::{debug, warn};
 
-use crate::utils::ResponseBody;
+use crate::utils::{ResponseBody, ResponseExt};
 
 const BUCKET_SIZE: u16 = 10;
 const REFILL_INTERVAL: Duration = Duration::from_mins(1);
@@ -230,10 +230,7 @@ where
                 .poll(cx)
                 .map_err(Into::into)
                 .map(|f| f.map(|resp| resp.map(ResponseBody::wrap))),
-            EnumProj::RateLimited => Poll::Ready(Ok(Response::builder()
-                .status(StatusCode::TOO_MANY_REQUESTS)
-                .body(ResponseBody::with_msg("too many requests"))
-                .expect("the values are hard coded"))),
+            EnumProj::RateLimited => Poll::Ready(Ok(Response::build(StatusCode::TOO_MANY_REQUESTS, "too any requests"))),
             EnumProj::NoAddrFoun => Poll::Ready(Err("no addr found on request".into())),
         }
     }

@@ -3,7 +3,7 @@ use std::task::{Poll, ready};
 use http::Version;
 use hyper::{Request, Response, StatusCode};
 use pin_project_lite::pin_project;
-use tower::{BoxError, Service};
+use tower::Service;
 use tracing::{debug, error};
 
 use crate::utils::*;
@@ -41,13 +41,12 @@ impl<S> tower::Layer<S> for AddrServiceLayer {
     }
 }
 
-impl<S, ReqB> Service<Request<ReqB>> for AddrService<S>
+impl<S, ReqB, ResB> Service<Request<ReqB>> for AddrService<S>
 where
-    S: Service<Request<ReqB>, Response = Response<Body>>,
-    S::Error: Into<BoxError>,
+    S: Service<Request<ReqB>, Response = Response<ResB>>,
 {
-    type Response = S::Response;
-    type Error = BoxError;
+    type Response = Response<ResponseBody<ResB>>;
+    type Error = S::Error;
     type Future = AddrFuture<S::Future>;
 
     fn poll_ready(
@@ -125,12 +124,11 @@ pin_project! {
     }
 }
 
-impl<F, E> Future for AddrFuture<F>
+impl<F, E, ResB> Future for AddrFuture<F>
 where
-    F: Future<Output = Result<Response<Body>, E>>,
-    E: Into<BoxError>,
+    F: Future<Output = Result<Response<ResB>, E>>,
 {
-    type Output = Result<Response<Body>, BoxError>;
+    type Output = Result<Response<ResponseBody<ResB>>, E>;
 
     fn poll(
         self: std::pin::Pin<&mut Self>,
@@ -139,17 +137,19 @@ where
         let this = self.project();
         match this {
             EnumProj::Service { fut, client_expect } => {
-                let mut resp = ready!(fut.poll(cx).map_err(Into::into))?;
+                let mut resp = ready!(fut.poll(cx))?;
 
                 // when the client expects HTTP2 but our backend responded with HTTP1
                 if resp.version() == Version::HTTP_11 && *client_expect == Version::HTTP_2 {
                     strip_illegal_http2_header(resp.headers_mut());
                 }
 
-                Poll::Ready(Ok(resp))
+                Poll::Ready(Ok(resp.map_body()))
             }
-            EnumProj::Error { code } => Poll::Ready(Ok(response(*code))),
+            EnumProj::Error { code } => {
+                let res = Response::empty(*code);
+                Poll::Ready(Ok(res))
+            }
         }
     }
 }
-

@@ -7,7 +7,7 @@ use thiserror::Error;
 use tower::{Layer, Service};
 use tracing::warn;
 
-use crate::utils::ResponseBody;
+use crate::utils::{ResponseBody, ResponseExt};
 
 const BODY_SIZE_LIMIT: u32 = 1 << 20; // 1 MB
 const HEADER_SIZE_LIMIT: u32 = (1 << 10) * 8; // 8 Kb
@@ -111,10 +111,7 @@ where
 
                 warn!(resp = %status, "invalid request");
 
-                Poll::Ready(Ok(Response::builder()
-                    .status(status)
-                    .body(ResponseBody::with_msg("error"))
-                    .unwrap()))
+                Poll::Ready(Ok(Response::build(status, "error")))
             }
         }
     }
