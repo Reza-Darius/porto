@@ -137,8 +137,7 @@ pub async fn send_notify(msg: CtrlMsg) -> Result<()> {
     };
 
     let Some(socket_path) = std::env::var_os(NOTIFY_SOCKET) else {
-        debug!("no notify socket variable found");
-        return Ok(());
+        return Err(anyhow!("could not retrieve NOTIFY_SOCKET env variable"));
     };
 
     let sock = UnixDatagram::unbound()

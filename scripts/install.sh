@@ -24,8 +24,8 @@ TMP_FOLDER="/tmp/porto"
 mkdir -p "${TMP_FOLDER}"
 mkdir -p "${CONFIG_FOLDER}"
 
-chown root:porto /etc/porto
-chmod 755 /etc/porto
+chown root:porto ${CONFIG_FOLDER}
+chmod 755 ${CONFIG_FOLDER}
 
 echo "downloading binaries"
 

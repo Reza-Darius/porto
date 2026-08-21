@@ -10,18 +10,23 @@ use crate::{
     utils::{CertChainPem, Domain, KeyPem},
 };
 
-pub struct CertStore {
-    inner: Arc<CertStoreInner>,
+pub trait CertStorage {
+    fn get(domain: &Domain) -> Option<(&CertChainPem, &KeyPem)>;
+    fn put(domains: impl Iterator<Item = Domain>, cert: CertChainPem, key: KeyPem);
 }
 
-pub struct CertStoreInner {
+pub struct CertStoreMem {
+    inner: Arc<CertStoreMemInner>,
+}
+
+pub struct CertStoreMemInner {
     map: Mutex<HashMap<Domain, (CertChainPem, KeyPem)>>,
 }
 
-impl CertStore {
+impl CertStoreMem {
     pub fn new() -> Self {
-        CertStore {
-            inner: Arc::new(CertStoreInner {
+        CertStoreMem {
+            inner: Arc::new(CertStoreMemInner {
                 map: Mutex::new(HashMap::new()),
             }),
         }

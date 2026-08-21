@@ -19,10 +19,7 @@ use rustls::{
 use tokio_rustls::TlsAcceptor;
 use tracing::{debug, error, info, warn};
 
-use crate::{
-    config::{PortoConfig, TlsConfig},
-    utils::*,
-};
+use crate::{config::TlsConfig, utils::*};
 use account::*;
 use helper::*;
 use order::*;
@@ -247,13 +244,14 @@ mod tests {
     use hyper::server::conn::http1::Builder;
     use hyper_util::rt::TokioIo;
     use hyper_util::service::TowerToHyperService;
-    use tokio::io::AsyncWriteExt;
     use test_log::test;
+    use tokio::io::AsyncWriteExt;
 
     use super::*;
     use challenge::*;
 
-    #[test(tokio::test)] #[ignore]
+    #[test(tokio::test)]
+    #[ignore]
     async fn acme_test() -> Result<()> {
         /*
         HOW TO TEST:
