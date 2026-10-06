@@ -1,27 +1,19 @@
-
 use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Result, anyhow};
 use instant_acme::{Account, KeyAuthorization};
-use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
-use rustls::{
-    ServerConfig,
-    pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject},
-    sign::CertifiedKey,
-};
+use parking_lot::Mutex;
+use rustls::ServerConfig;
 use tokio_rustls::TlsAcceptor;
 use tracing::{debug, error, info, warn};
 
-use crate::{
-    config::{PortoConfig, TlsConfig},
-    utils::*,
-};
+use crate::{config::TlsConfig, utils::*};
 
 use super::account::*;
+use super::cert_types::*;
 use super::helper::*;
 use super::order::*;
 use super::store::*;
-use super::cert_types::*;
 
 const CHECK_INTERVAL_HOURS: u64 = 24;
 
@@ -94,7 +86,6 @@ impl PortoACME {
     pub fn acceptor(&self) -> TlsAcceptor {
         TlsAcceptor::from(self.inner.config.clone())
     }
-
 }
 
 enum AcmeWorkerMode {
@@ -146,13 +137,14 @@ mod tests {
     use hyper::server::conn::http1::Builder;
     use hyper_util::rt::TokioIo;
     use hyper_util::service::TowerToHyperService;
-    use tokio::io::AsyncWriteExt;
     use test_log::test;
+    use tokio::io::AsyncWriteExt;
 
     use super::*;
     use challenge::*;
 
-    #[test(tokio::test)] #[ignore]
+    #[test(tokio::test)]
+    #[ignore]
     async fn acme_test() -> Result<()> {
         /*
         HOW TO TEST:

@@ -24,8 +24,13 @@ use crate::{
 
 /// Something that resolves do different cert chains/keys based
 /// on client-supplied server name (via SNI).
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct CertStore {
+    inner: Arc<CertStoreInner>,
+}
+
+#[derive(Debug, Default)]
+struct CertStoreInner {
     cert_path: PathBuf,
     key_path: PathBuf,
     map: Mutex<HashMap<Domain, Arc<sign::CertifiedKey>>>,
@@ -34,9 +39,11 @@ pub struct CertStore {
 impl CertStore {
     pub fn new(cert_path: impl Into<PathBuf>, key_path: impl Into<PathBuf>) -> Self {
         Self {
-            cert_path: cert_path.into(),
-            key_path: key_path.into(),
-            map: Mutex::new(HashMap::new()),
+            inner: Arc::new(CertStoreInner {
+                cert_path: cert_path.into(),
+                key_path: key_path.into(),
+                map: Mutex::new(HashMap::new()),
+            }),
         }
     }
 
@@ -60,7 +67,7 @@ impl CertStore {
         let provider = rustls::crypto::aws_lc_rs::default_provider();
         let ck = Arc::new(CertifiedKey::from_der(certs, key, &provider)?);
 
-        self.add(domains, ck.clone())?;
+        self.add_to_resolver(domains, ck.clone())?;
         Ok(())
     }
 
@@ -70,7 +77,7 @@ impl CertStore {
     pub fn check_for_expired(&self) -> Option<Vec<Domain>> {
         debug!("checking certs");
 
-        let guard = self.map.lock();
+        let guard = self.inner.map.lock();
         let expired_domains = guard
             .iter()
             .filter_map(|entry| {
@@ -91,12 +98,12 @@ impl CertStore {
     }
 
     pub fn init_from_disk(&self) -> Result<()> {
-        debug!(cert_path = %self.cert_path.display(), key_path = %self.key_path.display(), "loading certs from disk");
+        debug!(cert_path = %self.inner.cert_path.display(), key_path = %self.inner.key_path.display(), "loading certs from disk");
 
-        let certs = CertificateDer::pem_file_iter(&self.cert_path)?
+        let certs = CertificateDer::pem_file_iter(&self.inner.cert_path)?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| anyhow!("could not read certificate: {e}"))?;
-        let key = PrivateKeyDer::from_pem_file(&self.key_path)
+        let key = PrivateKeyDer::from_pem_file(&self.inner.key_path)
             .map_err(|e| anyhow!("could not read key: {e}"))?;
 
         // retrieve domains from leaf certificate
@@ -106,7 +113,12 @@ impl CertStore {
         let provider = rustls::crypto::aws_lc_rs::default_provider();
         let ck = Arc::new(CertifiedKey::from_der(certs, key, &provider)?);
 
-        self.add(domains.into_iter(), ck.clone())?;
+        self.add_to_resolver(domains.into_iter(), ck.clone())?;
+        Ok(())
+    }
+
+    pub fn save_to_disk(&self) -> Result<()> {
+
         Ok(())
     }
 
@@ -115,13 +127,22 @@ impl CertStore {
     /// This function fails if `name` is not a valid DNS name, or if
     /// it's not valid for the supplied certificate, or if the certificate
     /// chain is syntactically faulty.
-    fn add(
+    fn add_to_resolver(
         &self,
         domains: impl Iterator<Item = Domain>,
         ck: Arc<sign::CertifiedKey>,
     ) -> Result<()> {
-        let mut guard = self.map.lock();
-
+        // Check the certificate chain for validity:
+        // - it should be non-empty list
+        // - the first certificate should be parsable as a x509v3,
+        // - the first certificate should quote the given server name
+        //   (if provided)
+        //
+        // These checks are not security-sensitive.  They are the
+        // *server* attempting to detect accidental misconfiguration.
+        // 
+        // end-entity cert = leaf cert
+        let mut guard = self.inner.map.lock();
         let domains = domains.collect::<Vec<_>>();
 
         for domain in domains.iter() {
@@ -136,15 +157,6 @@ impl CertStore {
                 .and_then(|cert| verify_server_name(&cert, &server_name))?;
         }
 
-        // Check the certificate chain for validity:
-        // - it should be non-empty list
-        // - the first certificate should be parsable as a x509v3,
-        // - the first certificate should quote the given server name
-        //   (if provided)
-        //
-        // These checks are not security-sensitive.  They are the
-        // *server* attempting to detect accidental misconfiguration.
-
         for domain in domains {
             guard.insert(domain, ck.clone());
         }
@@ -156,7 +168,7 @@ impl server::ResolvesServerCert for CertStore {
     fn resolve(&self, client_hello: ClientHello<'_>) -> Option<Arc<sign::CertifiedKey>> {
         if let Some(name) = client_hello.server_name() {
             debug!("resolving cert for {name} in ClientHello");
-            self.map.lock().get(name).cloned()
+            self.inner.map.lock().get(name).cloned()
         } else {
             // This kind of resolver requires SNI
             None
