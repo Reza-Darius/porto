@@ -52,7 +52,7 @@ struct PortoTLSInner {
     /// in memory cache
     store: Mutex<HashMap<Domain, (CertChainPem, KeyPem)>>,
 
-    /// tokens for ACME challenged
+    /// tokens for ACME challenges
     pending_challenges: Mutex<HashMap<AcmeToken, KeyAuthorization>>,
 
     // these need to be arcs

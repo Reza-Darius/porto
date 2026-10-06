@@ -24,7 +24,7 @@ pub async fn get_account(debug: bool, cred_path: impl AsRef<Path>) -> Result<Acc
         Ok(acc) => Ok(acc),
         Err(e) => {
             warn!(err = %e, "couldnt read account from disk");
-            create_new_acc(&path).await
+            create_new_acc(&path, Staging::Test).await
         }
     }
 }
@@ -47,8 +47,20 @@ async fn read_from_file(path: &Path) -> Result<Account> {
     Err(anyhow!("credentials dont exist"))
 }
 
-async fn create_new_acc(path: &Path) -> Result<Account> {
+pub enum Staging {
+    Prod,
+    Test,
+}
+
+async fn create_new_acc(path: &Path, staging: Staging) -> Result<Account> {
     debug!("creating new account");
+
+    let directory_url = match staging {
+        Staging::Prod => LetsEncrypt::Production,
+        Staging::Test => LetsEncrypt::Staging,
+    }
+    .url()
+    .to_string();
 
     let (account, creds) = Account::builder()?
         .create(
@@ -58,7 +70,7 @@ async fn create_new_acc(path: &Path) -> Result<Account> {
                 only_return_existing: false,
             },
             // staging enviroment is for testing purposes
-            LetsEncrypt::Staging.url().to_owned(),
+            directory_url,
             None,
         )
         .await?;

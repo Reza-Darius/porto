@@ -7,7 +7,6 @@ use hyper_util::rt::TokioTimer;
 use pin_project_lite::pin_project;
 use tower::{BoxError, Service};
 use tracing::error;
-use tracing::debug;
 
 use super::connector::UpstreamConnector;
 use crate::utils::*;
