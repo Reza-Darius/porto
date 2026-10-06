@@ -32,7 +32,6 @@ tower-http = { version = "0.7.0", features = [
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
-addr = "0.15.6"
 anyhow = "1.0.102"
 axum = "0.8.9"
 axum-server = "0.8.0"

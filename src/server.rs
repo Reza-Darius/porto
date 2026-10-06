@@ -19,6 +19,7 @@ use crate::config::*;
 use crate::ctrl::*;
 use crate::services::*;
 use crate::setup::*;
+use crate::tls::is_tls;
 use crate::utils::*;
 
 #[instrument(skip_all)]

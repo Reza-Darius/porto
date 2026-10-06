@@ -1,16 +1,51 @@
-use std::{future::Ready, net::SocketAddr};
+use std::{collections::HashMap, future::Ready, net::SocketAddr, sync::Arc};
 
 use anyhow::Result;
 use hyper::{Request, Response, StatusCode, body::Incoming, server::conn::http1};
 use hyper_util::{rt::TokioIo, service::TowerToHyperService};
+use instant_acme::KeyAuthorization;
+use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
 use tokio::net::TcpListener;
 use tower::Service;
 use tracing::{error, info, warn};
 
-use crate::{acme::PortoTLS, utils::*};
+use crate::{tls::cert_types::AcmeToken, utils::*};
+
+#[derive(Clone)]
+pub struct ChallStore {
+    inner: Arc<ChallStoreInner>,
+}
+
+impl ChallStore {
+    pub fn new() -> Self {
+        ChallStore {
+            inner: Arc::new(ChallStoreInner {
+                map: Mutex::new(HashMap::new()),
+            }),
+        }
+    }
+
+    pub fn register_challenge(&self, token: AcmeToken, key: KeyAuthorization) {
+        self.inner.map.lock().insert(token, key);
+    }
+
+    pub fn get_chall_token(&self, token: &str) -> Option<MappedMutexGuard<'_, KeyAuthorization>> {
+        let guard = self.inner.map.lock();
+        MutexGuard::try_map(guard, |map| map.get_mut(token)).ok()
+    }
+
+    pub fn remove_challenge(&self, token: &AcmeToken) {
+        self.inner.map.lock().remove(token);
+    }
+}
+
+struct ChallStoreInner {
+    /// tokens for ACME challenges
+    map: Mutex<HashMap<AcmeToken, KeyAuthorization>>,
+}
 
 // OPTIMIZE: setup and tear this down as needed
-pub fn setup_chall_server(addr: SocketAddr, store: PortoTLS) {
+pub fn setup_chall_server(addr: SocketAddr, store: ChallStore) {
     tokio::spawn(async move {
         let listener = TcpListener::bind(addr).await.inspect_err(|e| error!(%e))?;
         let svc = Http1ChallSvc::new(store);
@@ -19,7 +54,6 @@ pub fn setup_chall_server(addr: SocketAddr, store: PortoTLS) {
 
         while let Ok(con) = listener.accept().await {
             let svc = TowerToHyperService::new(svc.clone());
-
             http1::Builder::new()
                 .serve_connection(TokioIo::new(con.0), svc)
                 .await
@@ -31,11 +65,11 @@ pub fn setup_chall_server(addr: SocketAddr, store: PortoTLS) {
 
 #[derive(Clone)]
 pub struct Http1ChallSvc {
-    store: PortoTLS,
+    store: ChallStore,
 }
 
 impl Http1ChallSvc {
-    pub fn new(store: PortoTLS) -> Self {
+    pub fn new(store: ChallStore) -> Self {
         Http1ChallSvc { store }
     }
 }

@@ -6,26 +6,23 @@ use instant_acme::{
 };
 use tracing::{debug, info, instrument};
 
-use crate::{
-    acme::{CERT_FILENAME, KEY_FILENAME, PortoTLS},
-    utils::*,
-};
+use crate::tls::challenge::ChallStore;
+use crate::utils::*;
+use super::acme::*;
+use super::cert_types::*;
+
 
 /// Create the ACME order based on the given domain names. Inserts them on success
-#[instrument(err, skip_all, fields(domains = ?domains))]
-pub async fn issue_order(store: PortoTLS, domains: &[Domain]) -> Result<()> {
+#[instrument(skip_all)]
+pub async fn issue_order(acc: &Account, chall_store: ChallStore, domains: impl Iterator<Item = &Domain>) -> Result<(CertChainPem, KeyPem)> {
     info!("issuing new ACME order");
 
-    let domains: Vec<_> = domains.to_vec();
-    let account = &store.inner.account;
-
     let identifier: Vec<_> = domains
-        .iter()
         .map(ToString::to_string)
         .map(Identifier::Dns)
         .collect();
 
-    let mut order = account.new_order(&NewOrder::new(&identifier)).await?;
+    let mut order = acc.new_order(&NewOrder::new(&identifier)).await?;
 
     // Pick the desired challenge type and prepare the response.
     let mut authorizations = order.authorizations();
@@ -49,7 +46,7 @@ pub async fn issue_order(store: PortoTLS, domains: &[Domain]) -> Result<()> {
 
         let token = AcmeToken::from_string(challenge.token.clone());
 
-        store.register_challenge(token.clone(), challenge.key_authorization());
+        chall_store.register_challenge(token.clone(), challenge.key_authorization());
 
         // remembering the token for removal later
         tokens.insert(token);
@@ -74,26 +71,27 @@ pub async fn issue_order(store: PortoTLS, domains: &[Domain]) -> Result<()> {
 
     {
         for token in tokens.into_iter() {
-            store.remove_challenge(&token);
+            chall_store.remove_challenge(&token);
         }
     }
 
-    write_order_to_disk(&store.inner.cred_path, &cert, &key)?;
-
-    {
-        // insert inside in memory cache
-        let mut guard = store.inner.store.lock();
-
-        for domain in domains.into_iter() {
-            store.add_to_resolver(&domain, cert.clone(), key.clone())?;
-            guard.insert(domain, (cert.clone(), key.clone()));
-        }
-    }
+    //
+    // write_order_to_disk(&store.inner.cred_path, &cert, &key)?;
+    //
+    // {
+    //     // insert inside in memory cache
+    //     let mut guard = store.inner.store.lock();
+    //
+    //     for domain in domains.into_iter() {
+    //         store.add_to_resolver(&domain, cert.clone(), key.clone())?;
+    //         guard.insert(domain, (cert.clone(), key.clone()));
+    //     }
+    // }
 
     info!("ACME order completed");
     debug!("\n{}\n{}", cert, key);
 
-    Ok(())
+    Ok((cert, key))
 }
 
 fn write_order_to_disk(path: impl AsRef<Path>, cert: &CertChainPem, key: &KeyPem) -> Result<()> {

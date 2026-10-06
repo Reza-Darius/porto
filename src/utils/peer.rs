@@ -7,13 +7,13 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 
-use addr::parse_domain_name;
 use anyhow::{Context, Result, anyhow};
 use derive_more::{Display, Eq};
 use http::uri::{Authority, PathAndQuery};
 use http::{Uri, Version};
 use hyperlocal::Uri as UdsUri;
 use parking_lot::{Mutex, RwLock};
+use rustls::pki_types::DnsName;
 use serde::Deserialize;
 use tracing::{debug, info};
 
@@ -280,18 +280,17 @@ impl<'de> Deserialize<'de> for Domain {
     where
         D: serde::Deserializer<'de> {
         let s = String::deserialize(deserializer)?;
-        Ok(Domain(Arc::from(s.to_ascii_lowercase())))
+        Domain::parse(s).map_err(serde::de::Error::custom)
     }
 }
 
 impl Domain {
     pub fn parse(domain: impl AsRef<str>) -> Result<Self> {
         let domain = domain.as_ref();
-        parse_domain_name(domain)
-            .map_err(|e| anyhow!("{e}"))?
-            .root()
-            .ok_or_else(|| anyhow!("couldnt extract root from domain {domain}"))
-            .map(|domain| Domain(Arc::from(domain)))
+        let dns = DnsName::try_from(domain)
+            .map_err(|e| anyhow!("invalid DNS name {domain:?}: {e}"))?
+            .to_lowercase_owned();
+        Ok(Domain(Arc::from(dns.as_ref())))
     }
 
     pub fn as_str(&self) -> &str {
