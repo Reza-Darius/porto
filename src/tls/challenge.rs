@@ -10,7 +10,7 @@ use instant_acme::KeyAuthorization;
 use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
 use pin_project_lite::pin_project;
 use tokio::net::TcpListener;
-use tower::{BoxError, Service};
+use tower::Service;
 use tracing::{debug, error, info, warn};
 
 use crate::{tls::cert_types::AcmeToken, utils::*};
@@ -22,7 +22,6 @@ pub struct ChallStore {
 }
 
 struct ChallStoreInner {
-    /// tokens for ACME challenges
     map: Mutex<HashMap<AcmeToken, KeyAuthorization>>,
 }
 
@@ -39,33 +38,10 @@ impl ChallStore {
         self.inner.map.lock().insert(token, key);
     }
 
-    pub fn check_request<ReqB, RespB>(
-        &self,
-        req: &Request<ReqB>,
-    ) -> Option<Response<ResponseBody<RespB>>> {
-        // http://<YOUR_DOMAIN>/.well-known/acme-challenge/<TOKEN>
-        let uri_token = req
-            .uri()
-            .path()
-            .strip_prefix("/.well-known/acme-challenge/")?;
-
-        debug!(uri_token, "got ACME http challenge");
-
-        self.inner
-            .map
-            .lock()
-            .get(uri_token)
-            .map(|key| Response::new(ResponseBody::full(key.as_str().to_string())))
-    }
-
     pub fn get_chall_token(&self, token: &str) -> Option<MappedMutexGuard<'_, KeyAuthorization>> {
         let guard = self.inner.map.lock();
         MutexGuard::try_map(guard, |map| map.get_mut(token)).ok()
     }
-
-    // pub fn remove_challenge(&self, token: &AcmeToken) {
-    //     self.inner.map.lock().remove(token);
-    // }
 
     pub fn clear(&self) {
         self.inner.map.lock().clear();
@@ -167,12 +143,30 @@ where
     }
 
     fn call(&mut self, req: Request<ReqB>) -> Self::Future {
-        self.store
-            .check_request(&req)
-            .map(|resp| Http1ChallFut::ChallResp { resp: Some(resp) })
-            .unwrap_or_else(|| Http1ChallFut::Inner {
+        // http://<YOUR_DOMAIN>/.well-known/acme-challenge/<TOKEN>
+        let Some(uri_token) = req
+            .uri()
+            .path()
+            .strip_prefix("/.well-known/acme-challenge/")
+        else {
+            return Http1ChallFut::Inner {
                 fut: self.inner.call(req),
-            })
+            };
+        };
+
+        debug!(uri_token, "got ACME token");
+
+        let resp = match self.store.get_chall_token(uri_token) {
+            Some(key) => Response::new(ResponseBody::full(key.as_str().to_string())),
+            None => {
+                warn!("no key authorization found for token!");
+                return Http1ChallFut::NotFound;
+            }
+        };
+
+        debug!("responding to ACME http challenge");
+
+        Http1ChallFut::ChallResp { resp: Some(resp) }
     }
 }
 
@@ -181,6 +175,7 @@ pin_project! {
     pub enum Http1ChallFut<F, ResB> {
         Inner{#[pin] fut: F},
         ChallResp{resp: Option<Response<ResponseBody<ResB>>>},
+        NotFound,
     }
 }
 
@@ -200,6 +195,10 @@ where
                 .poll(cx)
                 .map(|f| f.map(|resp| resp.map(ResponseBody::wrap))),
             EnumProj::ChallResp { resp } => Poll::Ready(Ok(resp.take().unwrap())),
+            EnumProj::NotFound => Poll::Ready(Ok(Response::builder()
+                .status(http::StatusCode::NOT_FOUND)
+                .body(ResponseBody::empty())
+                .unwrap())),
         }
     }
 }

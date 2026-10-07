@@ -1,6 +1,8 @@
 use std::borrow::Borrow;
 
+use anyhow::{Result, anyhow};
 use derive_more::{AsRef, Display, From};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
 use serde::{Deserialize, Serialize};
 use x509_parser::pem::parse_x509_pem;
 
@@ -30,6 +32,12 @@ impl CertChainPem {
 
         cert_should_renew(cert)
     }
+
+    pub fn to_der(&self) -> Result<Vec<CertificateDer<'_>>> {
+        CertificateDer::pem_slice_iter(self.0.as_bytes())
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| anyhow!("could not read certificate: {e}"))
+    }
 }
 
 /// PEM encoded certificate key
@@ -48,6 +56,11 @@ impl KeyPem {
 
     pub fn as_bytes(&self) -> &[u8] {
         self.0.as_bytes()
+    }
+
+    pub fn to_der(&self) -> Result<PrivateKeyDer<'_>> {
+        PrivateKeyDer::from_pem_slice(self.0.as_bytes())
+            .map_err(|e| anyhow!("could not read key: {e}"))
     }
 }
 

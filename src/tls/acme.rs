@@ -74,9 +74,9 @@ impl PortoACME {
         tokio::spawn(acme_worker(
             store.clone(),
             if config.debug {
-                AcmeWorkerMode::Debug
+                AcmeMode::Debug
             } else {
-                AcmeWorkerMode::Prod
+                AcmeMode::Prod
             },
         ));
 
@@ -88,14 +88,16 @@ impl PortoACME {
     }
 }
 
-enum AcmeWorkerMode {
+#[derive(Clone, Copy)]
+pub enum AcmeMode {
     Debug,
+    Staging,
     Prod,
 }
 
-async fn acme_worker(store: PortoACME, mode: AcmeWorkerMode) {
+async fn acme_worker(store: PortoACME, mode: AcmeMode) {
     match mode {
-        AcmeWorkerMode::Debug => {
+        AcmeMode::Debug => {
             // maybe move this into init?
             match store.load_certs_from_file() {
                 Ok(_) => info!("loaded certs from file"),
@@ -108,7 +110,7 @@ async fn acme_worker(store: PortoACME, mode: AcmeWorkerMode) {
                     .inspect_err(|e| error!(%e, "ACME error"));
             };
         }
-        AcmeWorkerMode::Prod => {
+        AcmeMode::Prod => {
             let mut timer = tokio::time::interval(Duration::from_hours(CHECK_INTERVAL_HOURS));
 
             loop {
