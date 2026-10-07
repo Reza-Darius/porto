@@ -104,6 +104,16 @@ impl<B> ResponseBody<B> {
         }
     }
 
+    /// create a empty body
+    pub(crate) fn full(data: impl Into<Bytes>) -> Self {
+        Self {
+            inner: ResponseBodyInner::Custom {
+                body: full(data),
+            },
+        }
+    }
+
+
     /// wraps the body, use this if you want to pass the body unaltered
     pub(crate) fn wrap(body: B) -> Self {
         Self {

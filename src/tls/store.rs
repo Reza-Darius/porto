@@ -85,11 +85,14 @@ impl CertStore {
         let expired_domains = guard
             .iter()
             .filter_map(|entry| {
-                if needs_renewal(entry.1.cert.first().unwrap()) {
-                    Some(entry.0.clone())
-                } else {
-                    None
-                }
+                needs_renewal(
+                    entry
+                        .1
+                        .cert
+                        .first()
+                        .expect("we always need to have a leaf cert"),
+                )
+                .then_some(entry.0.clone())
             })
             .collect::<Vec<_>>();
 
@@ -157,6 +160,7 @@ impl CertStore {
         }
 
         for domain in domains {
+            debug!(%domain, "adding to resolver");
             guard.insert(domain, ck.clone());
         }
         Ok(())
