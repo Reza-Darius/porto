@@ -4,9 +4,11 @@ use anyhow::{Result, anyhow};
 use instant_acme::{Account, KeyAuthorization};
 use parking_lot::Mutex;
 use rustls::ServerConfig;
+use serde::Deserialize;
 use tokio_rustls::TlsAcceptor;
 use tracing::{debug, error, info, warn};
 
+use crate::tls::challenge::ChallStore;
 use crate::{config::TlsConfig, utils::*};
 
 use super::account::*;
@@ -27,58 +29,45 @@ pub struct PortoACME {
 }
 
 struct PortoACMEInner {
-    /// path to credentials
     pub cred_path: PathBuf,
-
-    /// ACME account
     pub account: Account,
 
-    /// in memory cache
-    cert_store: Mutex<HashMap<Domain, (CertChainPem, KeyPem)>>,
-
-    /// tokens for ACME challenges
-    chall_store: Mutex<HashMap<AcmeToken, KeyAuthorization>>,
+    chall_store: ChallStore,
 
     // these need to be arcs
     config: Arc<ServerConfig>,
-    resolver: Arc<CertStore>,
+    cert_store: Arc<CertStore>,
 }
 
 impl PortoACME {
-    pub async fn init(config: &TlsConfig, peers: RouteTable) -> Result<Self> {
+    pub async fn init(config: &TlsConfig) -> Result<Self> {
         let path = config
             .credentials
             .clone()
             .ok_or_else(|| anyhow!("no credentials path provided"))?;
 
-        debug!("initializing TLS Service");
-        debug!(path = %path.display());
-        debug!(%peers);
+        debug!(path = %path.display(), "initializing TLS Service");
 
-        let resolver = Arc::new(CertStore::new());
-        let server_config = setup_rustls_config(config, resolver.clone());
-        let account = get_account(config.debug, &path).await?;
+        let cert_path = path.join(CERT_FILENAME);
+        let key_path = path.join(KEY_FILENAME);
+
+        let cert_store = Arc::new(CertStore::new(cert_path, key_path));
+        let chall_store = ChallStore::new();
+        let server_config = setup_rustls_config(config, cert_store.clone());
+        let account = get_account(config.acme_mode, &path).await?;
 
         let store = PortoACME {
             inner: Arc::new(PortoACMEInner {
                 cred_path: path,
                 account,
-                cert_store: Mutex::new(HashMap::new()),
-                chall_store: Mutex::new(HashMap::new()),
+                cert_store,
+                chall_store,
 
-                resolver,
                 config: Arc::new(server_config),
             }),
         };
 
-        tokio::spawn(acme_worker(
-            store.clone(),
-            if config.debug {
-                AcmeMode::Debug
-            } else {
-                AcmeMode::Prod
-            },
-        ));
+        tokio::spawn(acme_worker(store.clone(), config.acme_mode));
 
         Ok(store)
     }
@@ -88,8 +77,9 @@ impl PortoACME {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Deserialize, Debug, Default)]
 pub enum AcmeMode {
+    #[default]
     Debug,
     Staging,
     Prod,

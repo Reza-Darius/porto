@@ -24,13 +24,8 @@ use crate::{
 
 /// Something that resolves do different cert chains/keys based
 /// on client-supplied server name (via SNI).
-#[derive(Clone, Debug, Default)]
-pub struct CertStore {
-    inner: Arc<CertStoreInner>,
-}
-
 #[derive(Debug, Default)]
-struct CertStoreInner {
+pub struct CertStore {
     cert_path: PathBuf,
     key_path: PathBuf,
     map: Mutex<HashMap<Domain, Arc<sign::CertifiedKey>>>,
@@ -39,11 +34,9 @@ struct CertStoreInner {
 impl CertStore {
     pub fn new(cert_path: impl Into<PathBuf>, key_path: impl Into<PathBuf>) -> Self {
         Self {
-            inner: Arc::new(CertStoreInner {
-                cert_path: cert_path.into(),
-                key_path: key_path.into(),
-                map: Mutex::new(HashMap::new()),
-            }),
+            cert_path: cert_path.into(),
+            key_path: key_path.into(),
+            map: Mutex::new(HashMap::new()),
         }
     }
 
@@ -57,9 +50,9 @@ impl CertStore {
             return Err(anyhow!("cant register expired certificates!"));
         }
 
-        // TODO: optimize this
-        std::fs::write(&self.inner.cert_path, cert.as_bytes())?;
-        std::fs::write(&self.inner.key_path, key.as_bytes())?;
+        // OPTIMIZE: better file handling down the line
+        std::fs::write(&self.cert_path, cert.as_bytes())?;
+        std::fs::write(&self.key_path, key.as_bytes())?;
 
         let certs = CertificateDer::pem_slice_iter(cert.as_bytes())
             .collect::<Result<Vec<_>, _>>()
@@ -72,16 +65,16 @@ impl CertStore {
         let ck = Arc::new(CertifiedKey::from_der(certs, key, &provider)?);
 
         self.add_to_resolver(domains, ck.clone())?;
+
         Ok(())
     }
 
     /// check for expired certificates and returns the corresponding domains
-    ///
-    /// this function runs in O(n) time
     pub fn check_for_expired(&self) -> Option<Vec<Domain>> {
-        debug!("checking certs");
+        debug!("checking for renewing certs");
 
-        let guard = self.inner.map.lock();
+        // OPTIMIZE: come up with a better data structure to reduce redundant checks
+        let guard = self.map.lock();
         let expired_domains = guard
             .iter()
             .filter_map(|entry| {
@@ -105,12 +98,12 @@ impl CertStore {
     }
 
     pub fn init_from_disk(&self) -> Result<()> {
-        debug!(cert_path = %self.inner.cert_path.display(), key_path = %self.inner.key_path.display(), "loading certs from disk");
+        debug!(cert_path = %self.cert_path.display(), key_path = %self.key_path.display(), "loading certs from disk");
 
-        let certs = CertificateDer::pem_file_iter(&self.inner.cert_path)?
+        let certs = CertificateDer::pem_file_iter(&self.cert_path)?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| anyhow!("could not read certificate: {e}"))?;
-        let key = PrivateKeyDer::from_pem_file(&self.inner.key_path)
+        let key = PrivateKeyDer::from_pem_file(&self.key_path)
             .map_err(|e| anyhow!("could not read key: {e}"))?;
 
         // retrieve domains from leaf certificate
@@ -144,7 +137,7 @@ impl CertStore {
         // *server* attempting to detect accidental misconfiguration.
         //
         // end-entity cert = leaf cert
-        let mut guard = self.inner.map.lock();
+        let mut guard = self.map.lock();
         let domains = domains.collect::<Vec<_>>();
 
         for domain in domains.iter() {
@@ -171,7 +164,7 @@ impl server::ResolvesServerCert for CertStore {
     fn resolve(&self, client_hello: ClientHello<'_>) -> Option<Arc<sign::CertifiedKey>> {
         if let Some(name) = client_hello.server_name() {
             debug!("resolving cert for {name} in ClientHello");
-            self.inner.map.lock().get(name).cloned()
+            self.map.lock().get(name).cloned()
         } else {
             // This kind of resolver requires SNI
             None
@@ -199,7 +192,7 @@ fn domain_from_cert(cert: &CertificateDer<'_>) -> Result<Vec<Domain>> {
         .iter()
         .filter_map(|name| match name {
             x509_parser::extensions::GeneralName::DNSName(name) => {
-                // DEBUG unwrap
+                // TODO: better handling here, this is fine for getting the correctness right for now
                 Some(Domain::parse(name).expect("parsing error when getting domain from cert"))
             }
             _ => None,

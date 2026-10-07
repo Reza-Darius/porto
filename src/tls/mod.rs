@@ -8,3 +8,4 @@ mod cert_types;
 mod acme;
 
 pub use helper::is_tls;
+pub use acme::AcmeMode;

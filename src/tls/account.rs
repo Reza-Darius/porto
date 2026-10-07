@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::{Result, anyhow};
 use bincode::config::Configuration;
 use instant_acme::{Account, AccountCredentials, LetsEncrypt, NewAccount};
-use tracing::{debug, info, instrument, warn};
+use tracing::{debug, instrument, warn};
 
 use crate::tls::acme::AcmeMode;
 

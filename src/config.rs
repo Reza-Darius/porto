@@ -14,9 +14,7 @@ use tap::Pipe;
 use tracing::{debug, error, info, instrument, warn};
 
 use crate::{
-    cli::RunArgs,
-    ctrl::SD_CTRL_SOCK_PATH,
-    utils::{Domain, Peer, PeerAddr},
+    cli::RunArgs, ctrl::SD_CTRL_SOCK_PATH, tls::AcmeMode, utils::{Domain, Peer, PeerAddr},
 };
 
 const PORTO_CONFIG_ENV: &str = "PORTO_CONFIG";
@@ -132,7 +130,7 @@ pub struct TlsConfig {
     pub credentials: Option<PathBuf>,
 
     #[serde(skip)]
-    pub debug: bool, // for testing only
+    pub acme_mode: AcmeMode, // for testing only
 }
 
 impl TlsConfig {
