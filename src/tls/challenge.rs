@@ -1,7 +1,7 @@
-use std::{collections::HashMap, future::Ready, net::SocketAddr, sync::Arc};
+use std::{collections::HashMap, convert::Infallible, future::Ready, net::SocketAddr, sync::Arc};
 
 use anyhow::Result;
-use hyper::{Request, Response, StatusCode, body::Incoming, server::conn::http1};
+use hyper::{Request, Response, StatusCode, server::conn::http1};
 use hyper_util::{rt::TokioIo, service::TowerToHyperService};
 use instant_acme::KeyAuthorization;
 use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
@@ -11,9 +11,15 @@ use tracing::{error, info, warn};
 
 use crate::{tls::cert_types::AcmeToken, utils::*};
 
+/// cheap clonable handle to a store for ACME challenges
 #[derive(Clone)]
 pub struct ChallStore {
     inner: Arc<ChallStoreInner>,
+}
+
+struct ChallStoreInner {
+    /// tokens for ACME challenges
+    map: Mutex<HashMap<AcmeToken, KeyAuthorization>>,
 }
 
 impl ChallStore {
@@ -37,11 +43,10 @@ impl ChallStore {
     pub fn remove_challenge(&self, token: &AcmeToken) {
         self.inner.map.lock().remove(token);
     }
-}
 
-struct ChallStoreInner {
-    /// tokens for ACME challenges
-    map: Mutex<HashMap<AcmeToken, KeyAuthorization>>,
+    pub fn clear(&self) {
+        self.inner.map.lock().clear();
+    }
 }
 
 // OPTIMIZE: setup and tear this down as needed
@@ -74,9 +79,9 @@ impl Http1ChallSvc {
     }
 }
 
-impl Service<Request<Incoming>> for Http1ChallSvc {
+impl<ReqB> Service<Request<ReqB>> for Http1ChallSvc {
     type Response = Response<Body>;
-    type Error = anyhow::Error;
+    type Error = Infallible;
 
     type Future = Ready<Result<Self::Response, Self::Error>>;
 
@@ -87,7 +92,7 @@ impl Service<Request<Incoming>> for Http1ChallSvc {
         std::task::Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, req: Request<Incoming>) -> Self::Future {
+    fn call(&mut self, req: Request<ReqB>) -> Self::Future {
         // http://<YOUR_DOMAIN>/.well-known/acme-challenge/<TOKEN>
         let Some(uri_token) = req
             .uri()

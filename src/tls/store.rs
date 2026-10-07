@@ -57,6 +57,10 @@ impl CertStore {
             return Err(anyhow!("cant register expired certificates!"));
         }
 
+        // TODO: optimize this
+        std::fs::write(&self.inner.cert_path, cert.as_bytes())?;
+        std::fs::write(&self.inner.key_path, key.as_bytes())?;
+
         let certs = CertificateDer::pem_slice_iter(cert.as_bytes())
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| anyhow!("could not read certificate: {e}"))?;
@@ -117,11 +121,6 @@ impl CertStore {
         Ok(())
     }
 
-    pub fn save_to_disk(&self) -> Result<()> {
-
-        Ok(())
-    }
-
     /// Add a new `sign::CertifiedKey` to be used for the given SNI `name`.
     ///
     /// This function fails if `name` is not a valid DNS name, or if
@@ -140,7 +139,7 @@ impl CertStore {
         //
         // These checks are not security-sensitive.  They are the
         // *server* attempting to detect accidental misconfiguration.
-        // 
+        //
         // end-entity cert = leaf cert
         let mut guard = self.inner.map.lock();
         let domains = domains.collect::<Vec<_>>();
@@ -195,7 +194,10 @@ fn domain_from_cert(cert: &CertificateDer<'_>) -> Result<Vec<Domain>> {
         .general_names
         .iter()
         .filter_map(|name| match name {
-            x509_parser::extensions::GeneralName::DNSName(name) => Domain::parse(name).ok(),
+            x509_parser::extensions::GeneralName::DNSName(name) => {
+                // DEBUG unwrap
+                Some(Domain::parse(name).expect("parsing error when getting domain from cert"))
+            }
             _ => None,
         })
         .collect::<Vec<_>>();

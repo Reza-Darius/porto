@@ -6,15 +6,17 @@ use instant_acme::{
 };
 use tracing::{debug, info, instrument};
 
+use super::cert_types::*;
 use crate::tls::challenge::ChallStore;
 use crate::utils::*;
-use super::acme::*;
-use super::cert_types::*;
-
 
 /// Create the ACME order based on the given domain names. Inserts them on success
 #[instrument(skip_all)]
-pub async fn issue_order(acc: &Account, chall_store: ChallStore, domains: impl Iterator<Item = &Domain>) -> Result<(CertChainPem, KeyPem)> {
+pub async fn issue_order(
+    acc: &Account,
+    chall_store: ChallStore,
+    domains: impl Iterator<Item = &Domain>,
+) -> Result<(CertChainPem, KeyPem)> {
     info!("issuing new ACME order");
 
     let identifier: Vec<_> = domains
@@ -24,9 +26,7 @@ pub async fn issue_order(acc: &Account, chall_store: ChallStore, domains: impl I
 
     let mut order = acc.new_order(&NewOrder::new(&identifier)).await?;
 
-    // Pick the desired challenge type and prepare the response.
     let mut authorizations = order.authorizations();
-    let mut tokens: HashSet<AcmeToken> = HashSet::new();
 
     while let Some(result) = authorizations.next().await {
         let mut authz = result?;
@@ -36,6 +36,7 @@ pub async fn issue_order(acc: &Account, chall_store: ChallStore, domains: impl I
             _ => todo!(),
         }
 
+        // Pick the desired challenge type and prepare the response.
         let mut challenge = authz
             .challenge(ChallengeType::Http01)
             .ok_or_else(|| anyhow::anyhow!("no http01 challenge found"))?;
@@ -44,12 +45,9 @@ pub async fn issue_order(acc: &Account, chall_store: ChallStore, domains: impl I
             return Err(anyhow!("http01 challenge token is empty"));
         }
 
+        // put token in the chall store
         let token = AcmeToken::from_string(challenge.token.clone());
-
-        chall_store.register_challenge(token.clone(), challenge.key_authorization());
-
-        // remembering the token for removal later
-        tokens.insert(token);
+        chall_store.register_challenge(token, challenge.key_authorization());
 
         challenge.set_ready().await?;
     }
@@ -69,33 +67,10 @@ pub async fn issue_order(acc: &Account, chall_store: ChallStore, domains: impl I
     let key = KeyPem::from_string(order.finalize().await?);
     let cert = CertChainPem::from_string(order.poll_certificate(&RetryPolicy::default()).await?);
 
-    {
-        for token in tokens.into_iter() {
-            chall_store.remove_challenge(&token);
-        }
-    }
-
-    //
-    // write_order_to_disk(&store.inner.cred_path, &cert, &key)?;
-    //
-    // {
-    //     // insert inside in memory cache
-    //     let mut guard = store.inner.store.lock();
-    //
-    //     for domain in domains.into_iter() {
-    //         store.add_to_resolver(&domain, cert.clone(), key.clone())?;
-    //         guard.insert(domain, (cert.clone(), key.clone()));
-    //     }
-    // }
-
     info!("ACME order completed");
     debug!("\n{}\n{}", cert, key);
 
-    Ok((cert, key))
-}
+    chall_store.clear();
 
-fn write_order_to_disk(path: impl AsRef<Path>, cert: &CertChainPem, key: &KeyPem) -> Result<()> {
-    std::fs::write(path.as_ref().join(CERT_FILENAME), cert.as_bytes())?;
-    std::fs::write(path.as_ref().join(KEY_FILENAME), key.as_bytes())?;
-    Ok(())
+    Ok((cert, key))
 }

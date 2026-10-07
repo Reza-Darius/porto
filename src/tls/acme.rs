@@ -34,10 +34,10 @@ struct PortoACMEInner {
     pub account: Account,
 
     /// in memory cache
-    store: Mutex<HashMap<Domain, (CertChainPem, KeyPem)>>,
+    cert_store: Mutex<HashMap<Domain, (CertChainPem, KeyPem)>>,
 
     /// tokens for ACME challenges
-    pending_challenges: Mutex<HashMap<AcmeToken, KeyAuthorization>>,
+    chall_store: Mutex<HashMap<AcmeToken, KeyAuthorization>>,
 
     // these need to be arcs
     config: Arc<ServerConfig>,
@@ -63,8 +63,8 @@ impl PortoACME {
             inner: Arc::new(PortoACMEInner {
                 cred_path: path,
                 account,
-                store: Mutex::new(HashMap::new()),
-                pending_challenges: Mutex::new(HashMap::new()),
+                cert_store: Mutex::new(HashMap::new()),
+                chall_store: Mutex::new(HashMap::new()),
 
                 resolver,
                 config: Arc::new(server_config),
