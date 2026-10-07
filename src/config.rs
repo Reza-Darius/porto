@@ -158,7 +158,7 @@ impl Default for TlsConfig {
             cert_path: None,
             key_path: None,
             credentials: None,
-            debug: false,
+            acme_mode: AcmeMode::Debug,
         }
     }
 }

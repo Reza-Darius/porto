@@ -86,42 +86,43 @@ pub enum AcmeMode {
 }
 
 async fn acme_worker(store: PortoACME, mode: AcmeMode) {
-    match mode {
-        AcmeMode::Debug => {
-            // maybe move this into init?
-            match store.load_certs_from_file() {
-                Ok(_) => info!("loaded certs from file"),
-                Err(e) => warn!(%e, "couldnt load certs from file"),
-            };
-
-            if let Some(domains) = store.check_new_domains() {
-                let _ = issue_order(store.clone(), &domains)
-                    .await
-                    .inspect_err(|e| error!(%e, "ACME error"));
-            };
-        }
-        AcmeMode::Prod => {
-            let mut timer = tokio::time::interval(Duration::from_hours(CHECK_INTERVAL_HOURS));
-
-            loop {
-                timer.tick().await;
-
-                // TODO: some sort watcher channel for newly added domains when the server is running
-
-                if let Some(domains) = store.check_new_domains()
-                    && let Err(e) = issue_order(store.clone(), &domains).await
-                {
-                    error!(%e, "ACME error");
-                };
-
-                if let Some(domains) = store.check_certs()
-                    && let Err(e) = issue_order(store.clone(), &domains).await
-                {
-                    error!(%e, "ACME error");
-                };
-            }
-        }
-    }
+    // match mode {
+    //     AcmeMode::Debug => {
+    //         // maybe move this into init?
+    //         match store.load_certs_from_file() {
+    //             Ok(_) => info!("loaded certs from file"),
+    //             Err(e) => warn!(%e, "couldnt load certs from file"),
+    //         };
+    //
+    //         if let Some(domains) = store.check_new_domains() {
+    //             let _ = issue_order(store.clone(), &domains)
+    //                 .await
+    //                 .inspect_err(|e| error!(%e, "ACME error"));
+    //         };
+    //     }
+    //     AcmeMode::Prod => {
+    //         let mut timer = tokio::time::interval(Duration::from_hours(CHECK_INTERVAL_HOURS));
+    //
+    //         loop {
+    //             timer.tick().await;
+    //
+    //             // TODO: some sort watcher channel for newly added domains when the server is running
+    //
+    //             if let Some(domains) = store.check_new_domains()
+    //                 && let Err(e) = issue_order(store.clone(), &domains).await
+    //             {
+    //                 error!(%e, "ACME error");
+    //             };
+    //
+    //             if let Some(domains) = store.check_certs()
+    //                 && let Err(e) = issue_order(store.clone(), &domains).await
+    //             {
+    //                 error!(%e, "ACME error");
+    //             };
+    //         }
+    //     }
+    // }
+    todo!()
 }
 
 #[cfg(test)]
@@ -133,7 +134,7 @@ mod tests {
     use tokio::io::AsyncWriteExt;
 
     use super::*;
-    use challenge::*;
+    use crate::tls::challenge::*;
 
     #[test(tokio::test)]
     #[ignore]
@@ -145,40 +146,39 @@ mod tests {
         - curl with: curl --http1.1 --resolve acmetest.com:5002:127.0.0.1 https://acmetest.com:5002 -k -v
 
         */
-        let tls_config = TlsConfig {
-            debug: true,
-            credentials: Some(PathBuf::from("credentials")),
-            ..Default::default()
-        };
-
-        let addr = "0.0.0.0:5002"; // port for pebble ACME server
-
-        let domains = RouteTable::init_debug(&[("acmetest.com", "1.1.1.1:6767")])?;
-
-        let listener = tokio::net::TcpListener::bind(addr).await?;
-        let tls = PortoACME::init(&tls_config, domains).await.unwrap();
-        let service = TowerToHyperService::new(Http1ChallSvc::new(tls.clone()));
-
-        info!("test ACME server listening on {addr}");
-
-        while let Ok((con, _)) = listener.accept().await {
-            if is_tls(&con).await {
-                debug!("we got a TLS connection");
-                let acceptor = tls.acceptor();
-                match acceptor.accept(con).await {
-                    Ok(mut s) => {
-                        debug!("TLS established");
-                        let _ = s.write_all(b"HTTP/1.1 200 OK\r\n\r\n").await;
-                    }
-                    Err(e) => error!(%e, "error when accepting TLS"),
-                };
-                continue;
-            }
-
-            let stream = TokioIo::new(con);
-            let builder = Builder::new();
-            builder.serve_connection(stream, service.clone()).await?;
-        }
+        // let tls_config = TlsConfig {
+        //     credentials: Some(PathBuf::from("credentials")),
+        //     ..Default::default()
+        // };
+        //
+        // let addr = "0.0.0.0:5002"; // port for pebble ACME server
+        //
+        // let domains = RouteTable::init_debug(&[("acmetest.com", "1.1.1.1:6767")])?;
+        //
+        // let listener = tokio::net::TcpListener::bind(addr).await?;
+        // let tls = PortoACME::init(&tls_config, domains).await.unwrap();
+        // let service = TowerToHyperService::new(Http1ChallSvc::new(tls.clone()));
+        //
+        // info!("test ACME server listening on {addr}");
+        //
+        // while let Ok((con, _)) = listener.accept().await {
+        //     if is_tls(&con).await {
+        //         debug!("we got a TLS connection");
+        //         let acceptor = tls.acceptor();
+        //         match acceptor.accept(con).await {
+        //             Ok(mut s) => {
+        //                 debug!("TLS established");
+        //                 let _ = s.write_all(b"HTTP/1.1 200 OK\r\n\r\n").await;
+        //             }
+        //             Err(e) => error!(%e, "error when accepting TLS"),
+        //         };
+        //         continue;
+        //     }
+        //
+        //     let stream = TokioIo::new(con);
+        //     let builder = Builder::new();
+        //     builder.serve_connection(stream, service.clone()).await?;
+        // }
         Ok(())
     }
 }

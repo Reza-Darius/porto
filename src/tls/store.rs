@@ -50,21 +50,21 @@ impl CertStore {
             return Err(anyhow!("cant register expired certificates!"));
         }
 
-        // OPTIMIZE: better file handling down the line
-        std::fs::write(&self.cert_path, cert.as_bytes())?;
-        std::fs::write(&self.key_path, key.as_bytes())?;
-
-        let certs = CertificateDer::pem_slice_iter(cert.as_bytes())
+        let certs_der = CertificateDer::pem_slice_iter(cert.as_bytes())
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| anyhow!("could not read certificate: {e}"))?;
 
-        let key = PrivateKeyDer::from_pem_slice(key.as_bytes())
+        let key_der = PrivateKeyDer::from_pem_slice(key.as_bytes())
             .map_err(|e| anyhow!("could not read key: {e}"))?;
 
         let provider = rustls::crypto::aws_lc_rs::default_provider();
-        let ck = Arc::new(CertifiedKey::from_der(certs, key, &provider)?);
+        let ck = Arc::new(CertifiedKey::from_der(certs_der, key_der, &provider)?);
 
         self.add_to_resolver(domains, ck.clone())?;
+
+        // OPTIMIZE: better file handling down the line
+        std::fs::write(&self.cert_path, cert.as_bytes())?;
+        std::fs::write(&self.key_path, key.as_bytes())?;
 
         Ok(())
     }
@@ -135,21 +135,18 @@ impl CertStore {
         //
         // These checks are not security-sensitive.  They are the
         // *server* attempting to detect accidental misconfiguration.
-        //
-        // end-entity cert = leaf cert
+
         let mut guard = self.map.lock();
         let domains = domains.collect::<Vec<_>>();
+        if domains.is_empty() {
+            return Err(anyhow!("domains list is empty"))
+        }
+
+        // end-entity cert = leaf cert
+        let leaf_cert = ck.end_entity_cert().and_then(ParsedCertificate::try_from)?;
 
         for domain in domains.iter() {
-            let server_name = {
-                let checked_name = DnsName::try_from(domain.as_str())
-                    .map_err(|_| rustls::Error::General("Bad DNS name".into()))
-                    .map(|name| name.to_lowercase_owned())?;
-                ServerName::DnsName(checked_name)
-            };
-            ck.end_entity_cert()
-                .and_then(ParsedCertificate::try_from)
-                .and_then(|cert| verify_server_name(&cert, &server_name))?;
+            verify_server_name(&leaf_cert, &domain.as_server_name())?;
         }
 
         for domain in domains {
@@ -181,7 +178,7 @@ fn needs_renewal(cert: &CertificateDer) -> bool {
 fn domain_from_cert(cert: &CertificateDer<'_>) -> Result<Vec<Domain>> {
     let (_, cert) = parse_x509_certificate(cert.as_ref())?;
 
-    // for modern TLS we use the subject alternaive name (SAN) instead of the common name (CN)
+    // for modern TLS we use the subject alternative name (SAN) instead of the common name (CN)
     let san = cert
         .subject_alternative_name()?
         .ok_or_else(|| anyhow!("no SAN name found"))?;
@@ -191,6 +188,7 @@ fn domain_from_cert(cert: &CertificateDer<'_>) -> Result<Vec<Domain>> {
         .general_names
         .iter()
         .filter_map(|name| match name {
+            // wildcard certs can appear here
             x509_parser::extensions::GeneralName::DNSName(name) => {
                 // TODO: better handling here, this is fine for getting the correctness right for now
                 Some(Domain::parse(name).expect("parsing error when getting domain from cert"))
@@ -204,4 +202,17 @@ fn domain_from_cert(cert: &CertificateDer<'_>) -> Result<Vec<Domain>> {
     }
 
     Ok(domains)
+}
+
+#[cfg(test)]
+mod test {
+    use crate::utils::Domain;
+
+    #[test]
+    fn dns_name_parsing() {
+        let a = "*.foo.bar";
+        let b = "foo.bar";
+        assert!(Domain::parse(a).is_err());
+        assert!(Domain::parse(b).is_ok());
+    }
 }

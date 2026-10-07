@@ -42,7 +42,7 @@ pub fn cert_should_renew(cert: X509Certificate) -> bool {
     now >= (not_after - window)
 }
 
-/// checks for client hello
+/// checks stream for client hello
 #[inline(always)]
 pub async fn is_tls(stream: &TcpStream) -> bool {
     let mut peek_buf = [0u8; 1];

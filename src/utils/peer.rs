@@ -2,6 +2,7 @@
 use std::borrow::Borrow;
 use std::collections::{HashMap};
 use std::fmt::Display;
+use std::ops::Deref;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -13,7 +14,7 @@ use http::uri::{Authority, PathAndQuery};
 use http::{Uri, Version};
 use hyperlocal::Uri as UdsUri;
 use parking_lot::{Mutex, RwLock};
-use rustls::pki_types::DnsName;
+use rustls::pki_types::{DnsName, ServerName};
 use serde::Deserialize;
 use tracing::{debug, info};
 
@@ -271,8 +272,14 @@ impl PeerProto {
     }
 }
 
-#[derive(Debug, Clone, Display, Hash, Eq, PartialEq, PartialOrd, Ord)]
-pub struct Domain(Arc<str>);
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+pub struct Domain(Arc<DnsName<'static>>);
+
+impl Display for Domain {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
 
 // normalizing deserialization to lowercase
 impl<'de> Deserialize<'de> for Domain {
@@ -290,22 +297,38 @@ impl Domain {
         let dns = DnsName::try_from(domain)
             .map_err(|e| anyhow!("invalid DNS name {domain:?}: {e}"))?
             .to_lowercase_owned();
-        Ok(Domain(Arc::from(dns.as_ref())))
+        Ok(Domain(Arc::from(dns)))
     }
 
     pub fn as_str(&self) -> &str {
-        &self.0
+        self.0.deref().as_ref()
+    }
+
+    /// helper conversion function for rustls
+    pub fn as_server_name(&self) -> ServerName {
+        ServerName::DnsName(self.0.deref().borrow())
+    }
+}
+
+impl FromStr for Domain {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> std::prelude::v1::Result<Self, Self::Err> {
+        let dns = DnsName::try_from(s)
+            .map_err(|e| anyhow!("invalid DNS name {s:?}: {e}"))?
+            .to_lowercase_owned();
+        Ok(Domain(Arc::from(dns)))
     }
 }
 
 impl AsRef<str> for Domain {
     fn as_ref(&self) -> &str {
-        &self.0
+        self.0.deref().as_ref()
     }
 }
 
 impl Borrow<str> for Domain {
     fn borrow(&self) -> &str {
-        &self.0
+        self.0.deref().as_ref()
     }
 }
