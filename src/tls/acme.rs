@@ -54,7 +54,7 @@ impl PortoACME {
         let cert_store = Arc::new(CertStore::new(cert_path, key_path));
         let chall_store = ChallStore::new();
         let server_config = setup_rustls_config(config, cert_store.clone());
-        let account = get_account(config.acme_mode, &path).await?;
+        let account = get_account(&path, config.acme_mode).await?;
 
         let store = PortoACME {
             inner: Arc::new(PortoACMEInner {

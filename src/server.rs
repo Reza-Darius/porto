@@ -19,7 +19,6 @@ use crate::config::*;
 use crate::ctrl::*;
 use crate::services::*;
 use crate::setup::*;
-use crate::tls::is_tls;
 use crate::utils::*;
 
 #[instrument(skip_all)]
@@ -153,3 +152,15 @@ async fn handle_http(stream: TcpStream, addr: SocketAddr, service: HyperService,
     };
     debug!("stream closed");
 }
+
+/// checks stream for client hello
+#[inline(always)]
+async fn is_tls(stream: &TcpStream) -> bool {
+    let mut peek_buf = [0u8; 1];
+    match stream.peek(&mut peek_buf).await {
+        // a https "client hello" starts with 0x16
+        Ok(1) => peek_buf[0] == 0x16,
+        _ => false,
+    }
+}
+

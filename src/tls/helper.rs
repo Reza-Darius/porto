@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use rustls::{ServerConfig, server::ResolvesServerCert};
 use time::OffsetDateTime;
-use tokio::net::TcpStream;
 use x509_parser::certificate::X509Certificate;
 
 use crate::config::TlsConfig;
@@ -28,7 +27,8 @@ pub fn setup_rustls_config(
 
 #[inline(always)]
 pub fn cert_should_renew(cert: X509Certificate) -> bool {
-    const RENEW_LIFETIME_FRACTION: i64 = 3; // renew in the last 1/3 of lifetime
+    // renew in the last 1/3 of lifetime
+    const RENEW_LIFETIME_FRACTION: i64 = 3; 
     const MAX_RENEW_WINDOW_SECS: i64 = 30 * 24 * 60 * 60;
 
     let validity = cert.validity();
@@ -42,13 +42,3 @@ pub fn cert_should_renew(cert: X509Certificate) -> bool {
     now >= (not_after - window)
 }
 
-/// checks stream for client hello
-#[inline(always)]
-pub async fn is_tls(stream: &TcpStream) -> bool {
-    let mut peek_buf = [0u8; 1];
-    match stream.peek(&mut peek_buf).await {
-        // a https "client hello" starts with 0x16
-        Ok(1) => peek_buf[0] == 0x16,
-        _ => false,
-    }
-}

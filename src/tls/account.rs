@@ -13,29 +13,25 @@ static BINCODE_CONFIG: Configuration = bincode::config::standard();
 ///
 /// if debug == true it will create a pebble test account
 #[instrument(err, skip_all)]
-pub async fn get_account(mode: AcmeMode, acc_cred_path: impl AsRef<Path>) -> Result<Account> {
+pub async fn get_account(acc_cred_path: impl AsRef<Path>, mode: AcmeMode) -> Result<Account> {
     debug!("getting ACME account");
 
     match mode {
         AcmeMode::Debug => create_test_acc().await,
-        AcmeMode::Staging => {
-            match acc_from_file(&acc_cred_path).await {
-                Ok(acc) => Ok(acc),
-                Err(e) => {
-                    warn!(err = %e, "couldnt read account from disk");
-                    create_acc(acc_cred_path, LetsEncrypt::Staging).await
-                }
+        AcmeMode::Staging => match acc_from_file(&acc_cred_path).await {
+            Ok(acc) => Ok(acc),
+            Err(e) => {
+                warn!(err = %e, "couldnt read account from disk");
+                create_acc(acc_cred_path, LetsEncrypt::Staging).await
             }
-        }
-        AcmeMode::Prod => {
-            match acc_from_file(&acc_cred_path).await {
-                Ok(acc) => Ok(acc),
-                Err(e) => {
-                    warn!(err = %e, "couldnt read account from disk");
-                    create_acc(acc_cred_path, LetsEncrypt::Production).await
-                }
+        },
+        AcmeMode::Prod => match acc_from_file(&acc_cred_path).await {
+            Ok(acc) => Ok(acc),
+            Err(e) => {
+                warn!(err = %e, "couldnt read account from disk");
+                create_acc(acc_cred_path, LetsEncrypt::Production).await
             }
-        }
+        },
     }
 }
 

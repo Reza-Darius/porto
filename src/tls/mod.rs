@@ -1,11 +1,10 @@
 #![allow(dead_code)]
 mod account;
+mod acme;
+mod cert_types;
 mod challenge;
 mod helper;
 mod order;
 mod store;
-mod cert_types;
-mod acme;
 
-pub use helper::is_tls;
-pub use acme::AcmeMode;
+pub use acme::{AcmeMode, PortoACME};
