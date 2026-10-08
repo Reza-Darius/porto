@@ -46,9 +46,7 @@ impl CertStore {
         cert: CertChainPem,
         key: KeyPem,
     ) -> Result<()> {
-        if cert.should_renew() {
-            return Err(anyhow!("cant register expired certificates!"));
-        }
+        let mut map = self.map.lock();
 
         let certs_der = CertificateDer::pem_slice_iter(cert.as_bytes())
             .collect::<Result<Vec<_>, _>>()
@@ -60,7 +58,7 @@ impl CertStore {
         let provider = rustls::crypto::aws_lc_rs::default_provider();
         let ck = Arc::new(CertifiedKey::from_der(certs_der, key_der, &provider)?);
 
-        self.add_to_resolver(domains, ck.clone())?;
+        self.add_to_resolver(domains, ck.clone(), &mut map)?;
 
         // OPTIMIZE: better file handling down the line
         std::fs::write(&self.cert_path, cert.as_bytes())?;
@@ -99,6 +97,7 @@ impl CertStore {
 
     pub fn init_from_disk(&self) -> Result<()> {
         debug!(cert_path = %self.cert_path.display(), key_path = %self.key_path.display(), "loading certs from disk");
+        let mut map = self.map.lock();
 
         let certs = CertificateDer::pem_file_iter(&self.cert_path)?
             .collect::<Result<Vec<_>, _>>()
@@ -113,7 +112,7 @@ impl CertStore {
         let provider = rustls::crypto::aws_lc_rs::default_provider();
         let ck = Arc::new(CertifiedKey::from_der(certs, key, &provider)?);
 
-        self.add_to_resolver(domains.into_iter(), ck.clone())?;
+        self.add_to_resolver(domains.into_iter(), ck.clone(), &mut map)?;
         Ok(())
     }
 
@@ -126,6 +125,7 @@ impl CertStore {
         &self,
         domains: impl Iterator<Item = Domain>,
         ck: Arc<sign::CertifiedKey>,
+        map: &mut HashMap<Domain, Arc<CertifiedKey>>
     ) -> Result<()> {
         // Check the certificate chain for validity:
         // - it should be non-empty list
@@ -136,7 +136,6 @@ impl CertStore {
         // These checks are not security-sensitive.  They are the
         // *server* attempting to detect accidental misconfiguration.
 
-        let mut guard = self.map.lock();
         let domains = domains.collect::<Vec<_>>();
         if domains.is_empty() {
             return Err(anyhow!("domains list is empty"))
@@ -151,7 +150,7 @@ impl CertStore {
 
         for domain in domains {
             debug!(%domain, "adding to resolver");
-            guard.insert(domain, ck.clone());
+            map.insert(domain, ck.clone());
         }
         Ok(())
     }

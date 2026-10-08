@@ -305,7 +305,7 @@ impl Domain {
     }
 
     /// helper conversion function for rustls
-    pub fn as_server_name(&self) -> ServerName {
+    pub fn as_server_name(&self) -> ServerName<'_> {
         ServerName::DnsName(self.0.deref().borrow())
     }
 }

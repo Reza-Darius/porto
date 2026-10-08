@@ -25,12 +25,12 @@ pub const KEY_FILENAME: &str = "acme_key.pem";
 /// clonable handler to Porto's main TLS struct
 #[derive(Clone)]
 pub struct PortoACME {
-    pub inner: Arc<PortoACMEInner>,
+    inner: Arc<PortoACMEInner>,
 }
 
 struct PortoACMEInner {
-    pub cred_path: PathBuf,
-    pub account: Account,
+    cred_path: PathBuf,
+    account: Account,
 
     chall_store: ChallStore,
 
