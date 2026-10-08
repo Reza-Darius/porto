@@ -34,11 +34,11 @@ impl ChallStore {
         }
     }
 
-    pub fn register_challenge(&self, token: AcmeToken, key: KeyAuthorization) {
+    pub fn insert_challenge(&self, token: AcmeToken, key: KeyAuthorization) {
         self.inner.map.lock().insert(token, key);
     }
 
-    pub fn get_chall_token(&self, token: &str) -> Option<MappedMutexGuard<'_, KeyAuthorization>> {
+    pub fn get_challenge(&self, token: &str) -> Option<MappedMutexGuard<'_, KeyAuthorization>> {
         let guard = self.inner.map.lock();
         MutexGuard::try_map(guard, |map| map.get_mut(token)).ok()
     }
@@ -104,7 +104,7 @@ impl<ReqB> Service<Request<ReqB>> for Http1ChallSvc {
 
         debug!(uri_token, "got ACME token");
 
-        let resp = match self.store.get_chall_token(uri_token) {
+        let resp = match self.store.get_challenge(uri_token) {
             Some(key) => Response::new(full(key.as_str().to_string())),
             None => {
                 warn!("no key authorization found for token!");
@@ -156,7 +156,7 @@ where
 
         debug!(uri_token, "got ACME token");
 
-        let resp = match self.store.get_chall_token(uri_token) {
+        let resp = match self.store.get_challenge(uri_token) {
             Some(key) => Response::new(ResponseBody::full(key.as_str().to_string())),
             None => {
                 warn!("no key authorization found for token!");

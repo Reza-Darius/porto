@@ -1,5 +1,3 @@
-use std::{collections::HashSet, path::Path};
-
 use anyhow::{Result, anyhow};
 use instant_acme::{
     Account, AuthorizationStatus, ChallengeType, Identifier, NewOrder, OrderStatus, RetryPolicy,
@@ -47,7 +45,7 @@ pub async fn issue_order(
 
         // put token in the chall store
         let token = AcmeToken::from_string(challenge.token.clone());
-        chall_store.register_challenge(token, challenge.key_authorization());
+        chall_store.insert_challenge(token, challenge.key_authorization());
 
         challenge.set_ready().await?;
     }
