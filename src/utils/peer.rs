@@ -272,6 +272,7 @@ impl PeerProto {
     }
 }
 
+/// Represents a valid DNS name normalized to lower case
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
 pub struct Domain(Arc<DnsName<'static>>);
 

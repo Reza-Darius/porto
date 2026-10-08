@@ -5,14 +5,16 @@ use anyhow::anyhow;
 use parking_lot::Mutex;
 use rustls::pki_types::PrivateKeyDer;
 use rustls::pki_types::pem::PemObject;
+use rustls::server::ResolvesServerCert;
 use rustls::sign::CertifiedKey;
 use rustls::{
     client::verify_server_name,
-    pki_types::{CertificateDer, DnsName, ServerName},
-    server::{self, ClientHello, ParsedCertificate},
+    pki_types::CertificateDer,
+    server::{ClientHello, ParsedCertificate},
     sign::{self},
 };
 use tracing::debug;
+use x509_parser::certificate::X509Certificate;
 use x509_parser::nom::AsBytes;
 use x509_parser::parse_x509_certificate;
 
@@ -21,6 +23,17 @@ use crate::{
     tls::cert_types::{CertChainPem, KeyPem},
     utils::Domain,
 };
+
+pub trait CertificateStore: ResolvesServerCert {
+    fn store(
+        &self,
+        domains: impl Iterator<Item = Domain>,
+        cert: CertChainPem,
+        key: KeyPem,
+    ) -> Result<()>;
+
+    fn expired(&self, pred: impl Fn(&X509Certificate) -> bool) -> Option<Vec<Domain>>;
+}
 
 /// Something that resolves do different cert chains/keys based
 /// on client-supplied server name (via SNI).
@@ -38,33 +51,6 @@ impl CertStore {
             key_path: key_path.into(),
             map: Mutex::new(HashMap::new()),
         }
-    }
-
-    pub fn store(
-        &self,
-        domains: impl Iterator<Item = Domain>,
-        cert: CertChainPem,
-        key: KeyPem,
-    ) -> Result<()> {
-        let mut map = self.map.lock();
-
-        let certs_der = CertificateDer::pem_slice_iter(cert.as_bytes())
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| anyhow!("could not read certificate: {e}"))?;
-
-        let key_der = PrivateKeyDer::from_pem_slice(key.as_bytes())
-            .map_err(|e| anyhow!("could not read key: {e}"))?;
-
-        let provider = rustls::crypto::aws_lc_rs::default_provider();
-        let ck = Arc::new(CertifiedKey::from_der(certs_der, key_der, &provider)?);
-
-        self.add_to_resolver(domains, ck.clone(), &mut map)?;
-
-        // OPTIMIZE: better file handling down the line
-        std::fs::write(&self.cert_path, cert.as_bytes())?;
-        std::fs::write(&self.key_path, key.as_bytes())?;
-
-        Ok(())
     }
 
     /// check for expired certificates and returns the corresponding domains
@@ -125,7 +111,7 @@ impl CertStore {
         &self,
         domains: impl Iterator<Item = Domain>,
         ck: Arc<sign::CertifiedKey>,
-        map: &mut HashMap<Domain, Arc<CertifiedKey>>
+        map: &mut HashMap<Domain, Arc<CertifiedKey>>,
     ) -> Result<()> {
         // Check the certificate chain for validity:
         // - it should be non-empty list
@@ -138,7 +124,7 @@ impl CertStore {
 
         let domains = domains.collect::<Vec<_>>();
         if domains.is_empty() {
-            return Err(anyhow!("domains list is empty"))
+            return Err(anyhow!("domains list is empty"));
         }
 
         // end-entity cert = leaf cert
@@ -156,13 +142,66 @@ impl CertStore {
     }
 }
 
-impl server::ResolvesServerCert for CertStore {
+impl ResolvesServerCert for CertStore {
     fn resolve(&self, client_hello: ClientHello<'_>) -> Option<Arc<sign::CertifiedKey>> {
+        // TODO: what about uppercase SNI?
         if let Some(name) = client_hello.server_name() {
             debug!("resolving cert for {name} in ClientHello");
             self.map.lock().get(name).cloned()
         } else {
             // This kind of resolver requires SNI
+            None
+        }
+    }
+}
+
+impl CertificateStore for CertStore {
+    fn store(
+        &self,
+        domains: impl Iterator<Item = Domain>,
+        cert: CertChainPem,
+        key: KeyPem,
+    ) -> Result<()> {
+        let mut map = self.map.lock();
+
+        let certs_der = CertificateDer::pem_slice_iter(cert.as_bytes())
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| anyhow!("could not read certificate: {e}"))?;
+
+        let key_der = PrivateKeyDer::from_pem_slice(key.as_bytes())
+            .map_err(|e| anyhow!("could not read key: {e}"))?;
+
+        let provider = rustls::crypto::aws_lc_rs::default_provider();
+        let ck = Arc::new(CertifiedKey::from_der(certs_der, key_der, &provider)?);
+
+        self.add_to_resolver(domains, ck.clone(), &mut map)?;
+
+        // OPTIMIZE: better file handling down the line
+        std::fs::write(&self.cert_path, cert.as_bytes())?;
+        std::fs::write(&self.key_path, key.as_bytes())?;
+
+        Ok(())
+    }
+
+    fn expired(&self, pred: impl Fn(&X509Certificate) -> bool) -> Option<Vec<Domain>> {
+        debug!("checking for renewing certs");
+
+        // OPTIMIZE: come up with a better data structure to reduce redundant checks
+        let guard = self.map.lock();
+        let expired_domains = guard
+            .iter()
+            .filter_map(|entry| {
+                let cert = entry.1.cert.first().expect("we always have a leaf cert");
+                let (_, cert) = parse_x509_certificate(cert.as_bytes()).unwrap();
+
+                pred(&cert).then_some(entry.0.clone())
+            })
+            .collect::<Vec<_>>();
+
+        if !expired_domains.is_empty() {
+            debug!(?expired_domains, "expired certs found");
+            Some(expired_domains)
+        } else {
             None
         }
     }
