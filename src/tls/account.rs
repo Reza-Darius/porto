@@ -5,37 +5,30 @@ use bincode::config::Configuration;
 use instant_acme::{Account, AccountCredentials, LetsEncrypt, NewAccount};
 use tracing::{debug, instrument, warn};
 
-use crate::tls::acme::AcmeMode;
+use crate::tls::acme::AcmeProvider;
 
 static BINCODE_CONFIG: Configuration = bincode::config::standard();
 
 /// attempts to open a "cred_path/account" file otherwise creates a new account
 ///
 /// if debug == true it will create a pebble test account
-#[instrument(err, skip_all)]
-pub async fn get_account(acc_cred_path: impl AsRef<Path>, mode: AcmeMode) -> Result<Account> {
+#[instrument(skip_all)]
+pub async fn get_account(acc_cred_path: impl AsRef<Path>, mode: AcmeProvider) -> Result<Account> {
     debug!("getting ACME account");
 
     match mode {
-        AcmeMode::Debug => create_test_acc().await,
-        AcmeMode::Staging => match acc_from_file(&acc_cred_path).await {
+        AcmeProvider::Pebble(url) => create_pebble_acc(url).await,
+        AcmeProvider::LetsEncrypt(staging) => match acc_from_file(&acc_cred_path).await {
             Ok(acc) => Ok(acc),
             Err(e) => {
                 warn!(err = %e, "couldnt read account from disk");
-                create_acc(acc_cred_path, LetsEncrypt::Staging).await
-            }
-        },
-        AcmeMode::Prod => match acc_from_file(&acc_cred_path).await {
-            Ok(acc) => Ok(acc),
-            Err(e) => {
-                warn!(err = %e, "couldnt read account from disk");
-                create_acc(acc_cred_path, LetsEncrypt::Production).await
+                create_letsencrypt_acc(acc_cred_path, staging).await
             }
         },
     }
 }
 
-async fn create_acc(path: impl AsRef<Path>, staging: LetsEncrypt) -> Result<Account> {
+async fn create_letsencrypt_acc(path: impl AsRef<Path>, staging: LetsEncrypt) -> Result<Account> {
     debug!("creating new Let's Encrypt account");
 
     let (account, creds) = Account::builder()?
@@ -58,7 +51,7 @@ async fn create_acc(path: impl AsRef<Path>, staging: LetsEncrypt) -> Result<Acco
     Ok(account)
 }
 
-async fn create_test_acc() -> Result<Account> {
+async fn create_pebble_acc(url: String) -> Result<Account> {
     debug!("creating new testing account");
 
     let acc = NewAccount {
@@ -68,7 +61,7 @@ async fn create_test_acc() -> Result<Account> {
     };
 
     let acc = Account::builder_with_root("pebble.minica.pem")?
-        .create(&acc, "https://localhost:14000/dir".to_string(), None)
+        .create(&acc, url, None)
         .await?;
     debug!("we got an account");
 

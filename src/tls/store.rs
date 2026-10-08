@@ -14,6 +14,7 @@ use rustls::{
     sign::{self},
 };
 use tracing::debug;
+use tracing::debug_span;
 use x509_parser::certificate::X509Certificate;
 use x509_parser::nom::AsBytes;
 use x509_parser::parse_x509_certificate;
@@ -39,8 +40,8 @@ pub trait CertificateStore: ResolvesServerCert {
 /// on client-supplied server name (via SNI).
 #[derive(Debug, Default)]
 pub struct CertStore {
-    cert_path: PathBuf,
-    key_path: PathBuf,
+    pub cert_path: PathBuf,
+    pub key_path: PathBuf,
     map: Mutex<HashMap<Domain, Arc<sign::CertifiedKey>>>,
 }
 
@@ -53,36 +54,9 @@ impl CertStore {
         }
     }
 
-    /// check for expired certificates and returns the corresponding domains
-    pub fn check_for_expired(&self) -> Option<Vec<Domain>> {
-        debug!("checking for renewing certs");
+    pub fn init_from_disk(&self) -> Result<u32> {
 
-        // OPTIMIZE: come up with a better data structure to reduce redundant checks
-        let guard = self.map.lock();
-        let expired_domains = guard
-            .iter()
-            .filter_map(|entry| {
-                needs_renewal(
-                    entry
-                        .1
-                        .cert
-                        .first()
-                        .expect("we always need to have a leaf cert"),
-                )
-                .then_some(entry.0.clone())
-            })
-            .collect::<Vec<_>>();
-
-        if !expired_domains.is_empty() {
-            debug!(?expired_domains, "expired certs found");
-            Some(expired_domains)
-        } else {
-            None
-        }
-    }
-
-    pub fn init_from_disk(&self) -> Result<()> {
-        debug!(cert_path = %self.cert_path.display(), key_path = %self.key_path.display(), "loading certs from disk");
+        debug!(cert_path = %self.cert_path.display(), key_path = %self.key_path.display(), "loading certs");
         let mut map = self.map.lock();
 
         let certs = CertificateDer::pem_file_iter(&self.cert_path)?
@@ -95,11 +69,17 @@ impl CertStore {
         let leaf_cert = certs.first().ok_or_else(|| anyhow!("no cert found"))?;
         let domains = domain_from_cert(leaf_cert)?;
 
+        debug!(?domains, "found certificates for domains");
+
+        let ndomains = domains.len() as u32;
+
         let provider = rustls::crypto::aws_lc_rs::default_provider();
         let ck = Arc::new(CertifiedKey::from_der(certs, key, &provider)?);
 
         self.add_to_resolver(domains.into_iter(), ck.clone(), &mut map)?;
-        Ok(())
+
+        debug!("added {ndomains} to resolver");
+        Ok(ndomains)
     }
 
     /// Add a new `sign::CertifiedKey` to be used for the given SNI `name`.
@@ -156,6 +136,7 @@ impl ResolvesServerCert for CertStore {
 }
 
 impl CertificateStore for CertStore {
+    /// stores new certificates
     fn store(
         &self,
         domains: impl Iterator<Item = Domain>,
@@ -183,7 +164,9 @@ impl CertificateStore for CertStore {
         Ok(())
     }
 
+    /// retrieves certificates that should be renewed
     fn expired(&self, pred: impl Fn(&X509Certificate) -> bool) -> Option<Vec<Domain>> {
+
         debug!("checking for renewing certs");
 
         // OPTIMIZE: come up with a better data structure to reduce redundant checks
@@ -192,7 +175,8 @@ impl CertificateStore for CertStore {
             .iter()
             .filter_map(|entry| {
                 let cert = entry.1.cert.first().expect("we always have a leaf cert");
-                let (_, cert) = parse_x509_certificate(cert.as_bytes()).unwrap();
+                let (_, cert) = parse_x509_certificate(cert.as_bytes())
+                    .expect("we should only have valid certs in the store");
 
                 pred(&cert).then_some(entry.0.clone())
             })
@@ -205,12 +189,6 @@ impl CertificateStore for CertStore {
             None
         }
     }
-}
-
-// pancs if the cert cant be parsed
-fn needs_renewal(cert: &CertificateDer) -> bool {
-    let (_, cert) = parse_x509_certificate(cert.as_bytes()).unwrap();
-    cert_should_renew(cert)
 }
 
 fn domain_from_cert(cert: &CertificateDer<'_>) -> Result<Vec<Domain>> {

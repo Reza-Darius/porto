@@ -30,7 +30,7 @@ impl CertChainPem {
         let (_, pem) = parse_x509_pem(self.as_str().as_bytes()).unwrap();
         let cert = pem.parse_x509().unwrap();
 
-        cert_should_renew(cert)
+        cert_should_renew(&cert)
     }
 
     pub fn to_der(&self) -> Result<Vec<CertificateDer<'_>>> {

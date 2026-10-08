@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use thiserror::Error;
 
 // pub type Result<T> = std::result::Result<T, ProxyError>;
@@ -13,14 +15,16 @@ pub enum ProxyError {
 pub trait TraceErr<T, E> {
     /// emits a tracing error event in case of Err(e)
     ///
-    /// this is a convenicne function for `.inspect_err(|e| error!(%e))`
+    /// this is a convenience function for `.inspect_err(|e| error!(%e))`
     fn trace_err(self) -> Result<T, E>;
+
 }
 
 impl<T, E> TraceErr<T, E> for Result<T, E>
 where
-    E: std::error::Error,
+    E: Display
 {
+    #[inline(always)]
     fn trace_err(self) -> Result<T, E> {
         match self {
             Ok(ok) => Ok(ok),

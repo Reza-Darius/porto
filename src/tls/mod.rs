@@ -7,4 +7,4 @@ mod helper;
 mod order;
 mod store;
 
-pub use acme::{AcmeMode, PortoACME};
+pub use acme::{AcmeProvider, PortoACME};

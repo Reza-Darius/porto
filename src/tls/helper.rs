@@ -26,7 +26,7 @@ pub fn setup_rustls_config(
 }
 
 #[inline(always)]
-pub fn cert_should_renew(cert: X509Certificate) -> bool {
+pub fn cert_should_renew(cert: &X509Certificate) -> bool {
     // renew in the last 1/3 of lifetime
     const RENEW_LIFETIME_FRACTION: i64 = 3; 
     const MAX_RENEW_WINDOW_SECS: i64 = 30 * 24 * 60 * 60;

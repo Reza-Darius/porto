@@ -2,7 +2,7 @@ use anyhow::{Result, anyhow};
 use instant_acme::{
     Account, AuthorizationStatus, ChallengeType, Identifier, NewOrder, OrderStatus, RetryPolicy,
 };
-use tracing::{debug, info, instrument};
+use tracing::{debug, instrument};
 
 use super::cert_types::*;
 use crate::tls::challenge::ChallStore;
@@ -12,10 +12,10 @@ use crate::utils::*;
 #[instrument(skip_all)]
 pub async fn issue_order(
     acc: &Account,
-    chall_store: ChallStore,
+    chall_store: &ChallStore,
     domains: impl Iterator<Item = &Domain>,
 ) -> Result<(CertChainPem, KeyPem)> {
-    info!("issuing new ACME order");
+    debug!("issuing new ACME order");
 
     let identifier: Vec<_> = domains
         .map(ToString::to_string)
@@ -61,12 +61,12 @@ pub async fn issue_order(
         return Err(anyhow!("unexpected order status: {status:?}"));
     }
 
-    // Finalize the order and print certificate chain, private key and account credentials.
+    // Finalize the order
     let key = KeyPem::from_string(order.finalize().await?);
     let cert = CertChainPem::from_string(order.poll_certificate(&RetryPolicy::default()).await?);
 
-    info!("ACME order completed");
-    debug!("\n{}\n{}", cert, key);
+    debug!("ACME order completed");
+    // debug!("\n{}\n{}", cert, key);
 
     chall_store.clear();
 

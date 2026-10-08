@@ -14,7 +14,10 @@ use tap::Pipe;
 use tracing::{debug, error, info, instrument, warn};
 
 use crate::{
-    cli::RunArgs, ctrl::SD_CTRL_SOCK_PATH, tls::AcmeMode, utils::{Domain, Peer, PeerAddr},
+    cli::RunArgs,
+    ctrl::SD_CTRL_SOCK_PATH,
+    tls::AcmeProvider,
+    utils::{Domain, Peer, PeerAddr},
 };
 
 const PORTO_CONFIG_ENV: &str = "PORTO_CONFIG";
@@ -118,6 +121,7 @@ impl From<ProxyConfig> for Peer {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct TlsConfig {
+    pub domains: Vec<Domain>,
     #[serde(rename(deserialize = "tls"))]
     pub enabled: bool,
     pub auto_cert: bool,
@@ -128,9 +132,6 @@ pub struct TlsConfig {
 
     // for ACME
     pub credentials: Option<PathBuf>,
-
-    #[serde(skip)]
-    pub acme_mode: AcmeMode, // for testing only
 }
 
 impl TlsConfig {
@@ -158,7 +159,7 @@ impl Default for TlsConfig {
             cert_path: None,
             key_path: None,
             credentials: None,
-            acme_mode: AcmeMode::Debug,
+            domains: Vec::new(),
         }
     }
 }
