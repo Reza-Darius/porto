@@ -15,11 +15,11 @@ use rustls::{
 };
 use tracing::debug;
 use tracing::debug_span;
+use tracing::warn;
 use x509_parser::certificate::X509Certificate;
 use x509_parser::nom::AsBytes;
 use x509_parser::parse_x509_certificate;
 
-use crate::tls::helper::cert_should_renew;
 use crate::{
     tls::cert_types::{CertChainPem, KeyPem},
     utils::Domain,
@@ -55,7 +55,6 @@ impl CertStore {
     }
 
     pub fn init_from_disk(&self) -> Result<u32> {
-
         debug!(cert_path = %self.cert_path.display(), key_path = %self.key_path.display(), "loading certs");
         let mut map = self.map.lock();
 
@@ -78,7 +77,7 @@ impl CertStore {
 
         self.add_to_resolver(domains.into_iter(), ck.clone(), &mut map)?;
 
-        debug!("added {ndomains} to resolver");
+        debug!("added certs for {ndomains} domains to resolver");
         Ok(ndomains)
     }
 
@@ -126,8 +125,13 @@ impl ResolvesServerCert for CertStore {
     fn resolve(&self, client_hello: ClientHello<'_>) -> Option<Arc<sign::CertifiedKey>> {
         // TODO: what about uppercase SNI?
         if let Some(name) = client_hello.server_name() {
-            debug!("resolving cert for {name} in ClientHello");
-            self.map.lock().get(name).cloned()
+            match self.map.lock().get(name).cloned() {
+                Some(key) => Some(key),
+                None => {
+                    warn!("failed to resolve cert for {name}");
+                    None
+                },
+            }
         } else {
             // This kind of resolver requires SNI
             None
@@ -166,7 +170,6 @@ impl CertificateStore for CertStore {
 
     /// retrieves certificates that should be renewed
     fn expired(&self, pred: impl Fn(&X509Certificate) -> bool) -> Option<Vec<Domain>> {
-
         debug!("checking for renewing certs");
 
         // OPTIMIZE: come up with a better data structure to reduce redundant checks

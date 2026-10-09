@@ -5,22 +5,22 @@ use instant_acme::{
 use tracing::{debug, instrument};
 
 use super::cert_types::*;
-use crate::tls::challenge::ChallStore;
+use crate::tls::challenge::ChallStoreHandle;
 use crate::utils::*;
 
 /// Create the ACME order based on the given domain names. Inserts them on success
 #[instrument(skip_all)]
 pub async fn issue_order(
     acc: &Account,
-    chall_store: &ChallStore,
+    chall_store: &ChallStoreHandle,
     domains: impl Iterator<Item = &Domain>,
 ) -> Result<(CertChainPem, KeyPem)> {
-    debug!("issuing new ACME order");
-
     let identifier: Vec<_> = domains
         .map(ToString::to_string)
         .map(Identifier::Dns)
         .collect();
+
+    debug!(?identifier, "issuing new ACME order");
 
     let mut order = acc.new_order(&NewOrder::new(&identifier)).await?;
 

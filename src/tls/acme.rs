@@ -1,19 +1,16 @@
-use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Result, anyhow};
-use instant_acme::{Account, KeyAuthorization, LetsEncrypt};
-use parking_lot::Mutex;
+use instant_acme::{Account, LetsEncrypt};
 use rustls::ServerConfig;
-use serde::Deserialize;
 use tokio_rustls::TlsAcceptor;
-use tracing::{debug, debug_span, error, info, instrument, warn};
+use tracing::{debug, error, instrument, warn};
 
-use crate::errors::TraceErr;
-use crate::tls::challenge::ChallStore;
+use crate::errors::TraceError;
+use crate::tls::challenge::ChallStoreHandle;
 use crate::{config::TlsConfig, utils::*};
 
 use super::account::*;
-use super::cert_types::*;
 use super::helper::*;
 use super::order::*;
 use super::store::*;
@@ -31,7 +28,7 @@ pub struct PortoACME {
 
 struct PortoACMEInner {
     cred_path: PathBuf,
-    chall_store: ChallStore,
+    chall_handle: ChallStoreHandle,
 
     // these need to be arcs
     config: Arc<ServerConfig>,
@@ -39,7 +36,12 @@ struct PortoACMEInner {
 }
 
 impl PortoACME {
-    pub async fn init(config: TlsConfig, provider: AcmeProvider) -> Result<Self> {
+    /// initalizes the ACME engine, requires a service ready for HTTP challenges to be recieved
+    pub async fn init(
+        config: TlsConfig,
+        provider: AcmeProvider,
+        chall_handle: ChallStoreHandle,
+    ) -> Result<Self> {
         let path = config
             .credentials
             .clone()
@@ -51,14 +53,13 @@ impl PortoACME {
         let key_path = path.join(KEY_FILENAME);
 
         let cert_store = Arc::new(CertStore::new(cert_path, key_path));
-        let chall_store = ChallStore::new();
         let server_config = setup_rustls_config(&config, cert_store.clone());
 
         let store = PortoACME {
             inner: Arc::new(PortoACMEInner {
                 cred_path: path,
                 cert_store,
-                chall_store,
+                chall_handle,
 
                 config: Arc::new(server_config),
             }),
@@ -98,7 +99,7 @@ async fn initialize_store(domains: Vec<Domain>, acc: &Account, store: &PortoACME
 }
 
 async fn order_and_store(domains: Vec<Domain>, acc: &Account, store: &PortoACME) -> Result<()> {
-    issue_order(acc, &store.inner.chall_store, domains.iter())
+    issue_order(acc, &store.inner.chall_handle, domains.iter())
         .await
         .and_then(|(cert, key)| store.inner.cert_store.store(domains.into_iter(), cert, key))
 }
@@ -120,7 +121,7 @@ async fn acme_worker(acc: Account, store: PortoACME) {
         timer.tick().await;
 
         if let Some(domains) = store.inner.cert_store.expired(cert_should_renew) {
-            match issue_order(&acc, &store.inner.chall_store, domains.iter()).await {
+            match issue_order(&acc, &store.inner.chall_handle, domains.iter()).await {
                 Ok((cert, key)) => {
                     let _ = store
                         .inner
@@ -136,22 +137,13 @@ async fn acme_worker(acc: Account, store: PortoACME) {
 
 #[cfg(test)]
 mod tests {
-    use hyper::server::conn::http1::Builder;
-    use hyper_util::rt::TokioIo;
-    use hyper_util::service::TowerToHyperService;
     use test_log::test;
     use tokio::io::AsyncWriteExt;
     use tokio::net::TcpStream;
+    use tracing::info;
 
     use super::*;
     use crate::tls::challenge::*;
-
-    const DIRECTORY_URL: &str = "https://localhost:14000/dir";
-    const DEBUG_DNS: &str = "acmetest.com";
-
-    // pebble sends challenges to port 5002
-    const LISTENING_ADDR: &str = "0.0.0.0:5002";
-    const CRED_DIR: &str = "credentials/test/";
 
     async fn is_tls(stream: &TcpStream) -> bool {
         let mut peek_buf = [0u8; 1];
@@ -173,32 +165,52 @@ mod tests {
 
         */
 
+        // pebble sends challenges to port 5002
+        const CHALL_LISTEN_ADDR: &str = "0.0.0.0:5002";
+        const DIRECTORY_URL: &str = "https://localhost:14000/dir";
+        // the host name we want to test for
+        const DEBUG_DNS: &str = "acmetest.com";
+
+        const TLS_LISTEN_ADDR: &str = "0.0.0.0:8000";
+        const CRED_DIR: &str = "credentials/test/";
+
         let tls_config = TlsConfig {
             domains: vec![Domain::parse(DEBUG_DNS)?],
             credentials: Some(PathBuf::from(CRED_DIR)),
             ..Default::default()
         };
+
+        // setup http1 chall server
+        let chall_store = ChallStoreHandle::new();
+
+        setup_chall_server(CHALL_LISTEN_ADDR.parse().unwrap(), chall_store.clone());
+
+        // prevent race condition to make sure the chall server is up and running before
+        // initilaizing ACME
+        tokio::time::sleep(Duration::from_secs(1)).await;
+
+        // setup TLS server
         let provider = AcmeProvider::Pebble(DIRECTORY_URL.to_string());
-        let tls = PortoACME::init(tls_config, provider).await?;
+        let tls = PortoACME::init(tls_config, provider, chall_store).await?;
+        let tls_listener = tokio::net::TcpListener::bind(TLS_LISTEN_ADDR).await?;
 
-        let listener = tokio::net::TcpListener::bind(LISTENING_ADDR).await?;
-        let service = TowerToHyperService::new(Http1ChallSvc::new(tls.inner.chall_store.clone()));
+        info!("listening for TLS requests on {TLS_LISTEN_ADDR}");
 
-        while let Ok((con, _)) = listener.accept().await {
+        while let Ok((con, _)) = tls_listener.accept().await.trace_err() {
+            debug!("got connection");
             if is_tls(&con).await {
                 let acceptor = tls.acceptor();
                 match acceptor.accept(con).await {
                     Ok(mut s) => {
-                        let _ = s.write_all(b"HTTP/1.1 200 OK\r\n\r\n").await;
+                        debug!("TLS accepted!");
+                        s.write_all(b"HTTP/1.1 200 OK\r\n\r\n").await?;
+                        s.shutdown().await?;
                         return Ok(());
                     }
                     Err(e) => panic!("error when accepting TLS: {}", e),
                 };
             }
-
-            let stream = TokioIo::new(con);
-            let builder = Builder::new();
-            builder.serve_connection(stream, service.clone()).await?;
+            // panic!("got non TLS request");
         }
         Ok(())
     }

@@ -1,7 +1,7 @@
 #![allow(clippy::new_without_default)]
 use std::borrow::Borrow;
-use std::collections::{HashMap};
-use std::fmt::Display;
+use std::collections::HashMap;
+use std::fmt::{Debug, Display};
 use std::ops::Deref;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -273,7 +273,7 @@ impl PeerProto {
 }
 
 /// Represents a valid DNS name normalized to lower case
-#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+#[derive(Clone)]
 pub struct Domain(Arc<DnsName<'static>>);
 
 impl Display for Domain {
@@ -282,11 +282,34 @@ impl Display for Domain {
     }
 }
 
+impl Debug for Domain {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        <Self as Display>::fmt(self, f)
+    }
+}
+
+// rustls uses special hashing for dnsname, which we circumvent to hash against standard strings
+impl std::hash::Hash for Domain {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // must match <str as Hash>::hash for Borrow<str> to be sound
+        self.as_str().hash(state)
+    }
+}
+
+impl PartialEq for Domain {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl Eq for Domain {}
+
 // normalizing deserialization to lowercase
 impl<'de> Deserialize<'de> for Domain {
     fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
     where
-        D: serde::Deserializer<'de> {
+        D: serde::Deserializer<'de>,
+    {
         let s = String::deserialize(deserializer)?;
         Domain::parse(s).map_err(serde::de::Error::custom)
     }
@@ -331,5 +354,30 @@ impl AsRef<str> for Domain {
 impl Borrow<str> for Domain {
     fn borrow(&self) -> &str {
         self.0.deref().as_ref()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn domain_borrow_str_lookup() -> anyhow::Result<()> {
+        use std::collections::HashMap;
+
+        let mut m: HashMap<Domain, u32> = HashMap::new();
+        m.insert(Domain::parse("Example.com")?, 1);
+
+        assert_eq!(m.get("example.com"), Some(&1));
+        assert_eq!(m.get("Example.com"), None); // &str is not case-folded
+        Ok(())
+    }
+
+    #[test]
+    fn domain_hash_matches_str() {
+        use std::hash::{BuildHasher, RandomState};
+        let s = RandomState::new();
+        let d = Domain::parse("Example.com").unwrap();
+        assert_eq!(s.hash_one(&d), s.hash_one("example.com"));
     }
 }

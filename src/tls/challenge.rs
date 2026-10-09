@@ -15,9 +15,15 @@ use tracing::{debug, error, info, warn};
 
 use crate::{tls::cert_types::AcmeToken, utils::*};
 
+pub trait HttpChallengeStore {
+    fn insert(&self, token: AcmeToken, key: KeyAuthorization);
+    fn get(&self, token: impl AsRef<str>) -> Option<MappedMutexGuard<'_, KeyAuthorization>>;
+    fn clear(&self);
+}
+
 /// cheap clonable handle to a store for ACME challenges
 #[derive(Clone)]
-pub struct ChallStore {
+pub struct ChallStoreHandle {
     inner: Arc<ChallStoreInner>,
 }
 
@@ -25,9 +31,9 @@ struct ChallStoreInner {
     map: Mutex<HashMap<AcmeToken, KeyAuthorization>>,
 }
 
-impl ChallStore {
+impl ChallStoreHandle {
     pub fn new() -> Self {
-        ChallStore {
+        ChallStoreHandle {
             inner: Arc::new(ChallStoreInner {
                 map: Mutex::new(HashMap::new()),
             }),
@@ -49,12 +55,12 @@ impl ChallStore {
 }
 
 // OPTIMIZE: setup and tear this down as needed
-pub fn setup_chall_server(addr: SocketAddr, store: ChallStore) {
+pub fn setup_chall_server(addr: SocketAddr, store: ChallStoreHandle) {
     tokio::spawn(async move {
         let listener = TcpListener::bind(addr).await.inspect_err(|e| error!(%e))?;
         let svc = Http1ChallSvc::new(store);
 
-        info!("acme server listening on {addr}");
+        info!("http chall server listening on {addr}");
 
         while let Ok(con) = listener.accept().await {
             let svc = TowerToHyperService::new(svc.clone());
@@ -69,11 +75,11 @@ pub fn setup_chall_server(addr: SocketAddr, store: ChallStore) {
 
 #[derive(Clone)]
 pub struct Http1ChallSvc {
-    store: ChallStore,
+    store: ChallStoreHandle,
 }
 
 impl Http1ChallSvc {
-    pub fn new(store: ChallStore) -> Self {
+    pub fn new(store: ChallStoreHandle) -> Self {
         Http1ChallSvc { store }
     }
 }
@@ -117,12 +123,12 @@ impl<ReqB> Service<Request<ReqB>> for Http1ChallSvc {
 
 #[derive(Clone)]
 pub struct Http1ChallMiddleware<S> {
-    store: ChallStore,
+    store: ChallStoreHandle,
     inner: S,
 }
 
 impl<S> Http1ChallMiddleware<S> {
-    pub fn new(store: ChallStore, inner: S) -> Self {
+    pub fn new(store: ChallStoreHandle, inner: S) -> Self {
         Http1ChallMiddleware { store, inner }
     }
 }

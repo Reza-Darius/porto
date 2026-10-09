@@ -11,7 +11,7 @@ use rand::RngExt;
 use tower::Service;
 use tracing::{debug, info, warn};
 
-use crate::{errors::TraceErr, services::upstream::hyper_client::UpstreamService, utils::*};
+use crate::{errors::TraceError, services::upstream::hyper_client::UpstreamService, utils::*};
 
 // this is a singleton running in the background
 struct HealthService {

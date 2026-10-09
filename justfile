@@ -23,3 +23,9 @@ t:
 install: build-server
     sudo install -o root -g root -m 755 target/release/porto /usr/local/bin/porto
     sudo systemctl restart porto
+
+test_acme:
+    docker compose up -d
+    cargo test acme_test -- --ignored --no-capture
+    curl --http1.1 --resolve acmetest.com:8000:127.0.0.1 https://acmetest.com:8000 -k -v
+    docker compose down

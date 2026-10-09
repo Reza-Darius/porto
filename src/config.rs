@@ -121,17 +121,18 @@ impl From<ProxyConfig> for Peer {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct TlsConfig {
-    pub domains: Vec<Domain>,
     #[serde(rename(deserialize = "tls"))]
     pub enabled: bool,
+    pub domains: Vec<Domain>,
+
+    // if this is enabled, the other paths are ignored
     pub auto_cert: bool,
+    pub credentials: Option<PathBuf>,
 
     // for simple TLS
     pub cert_path: Option<PathBuf>,
     pub key_path: Option<PathBuf>,
 
-    // for ACME
-    pub credentials: Option<PathBuf>,
 }
 
 impl TlsConfig {
