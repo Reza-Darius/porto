@@ -7,7 +7,6 @@ use x509_parser::certificate::X509Certificate;
 use crate::config::TlsConfig;
 
 pub fn setup_rustls_config(
-    config: &TlsConfig,
     resolver: Arc<impl ResolvesServerCert + 'static>,
 ) -> ServerConfig {
     // this should crash the program if called twice

@@ -7,7 +7,7 @@ use anyhow::{Result, anyhow};
 use http::StatusCode;
 use porto::config::TlsConfig;
 use porto::errors::TraceError;
-use porto::tls::{AcmeProvider, ChallStoreHandle, PortoACME, setup_chall_server};
+use porto::tls::{AcmeConfig, AcmeProvider, ChallStoreHandle, PortoACME, setup_chall_server};
 use porto::utils::Domain;
 use reqwest::ClientBuilder;
 use reqwest::dns::Resolve;
@@ -144,10 +144,10 @@ async fn acme_test_init() -> Result<()> {
     setup_pebble().await;
     setup_dir();
 
-    let tls_config = TlsConfig {
+    let cfg = AcmeConfig {
         domains: vec![Domain::parse(DEBUG_DNS)?],
-        credentials: Some(PathBuf::from(CRED_DIR)),
-        ..Default::default()
+        credentials: PathBuf::from(CRED_DIR),
+        check_interval: 24,
     };
 
     // setup http1 chall server
@@ -161,7 +161,7 @@ async fn acme_test_init() -> Result<()> {
 
     // setup TLS server
     let provider = AcmeProvider::Pebble(DIRECTORY_URL.to_string());
-    let tls = PortoACME::init(tls_config, provider, chall_store).await?;
+    let tls = PortoACME::init(cfg, provider, chall_store).await?;
     let tls_listener = tokio::net::TcpListener::bind(TLS_LISTEN_ADDR).await?;
 
     info!("listening for TLS requests on {TLS_LISTEN_ADDR}");

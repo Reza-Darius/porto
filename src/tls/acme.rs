@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use instant_acme::{Account, LetsEncrypt};
 use rustls::ServerConfig;
 use tokio_rustls::TlsAcceptor;
@@ -8,7 +8,7 @@ use tracing::{debug, error, instrument, warn};
 
 use crate::errors::TraceError;
 use crate::tls::challenge::ChallStoreHandle;
-use crate::{config::TlsConfig, utils::*};
+use crate::utils::*;
 
 use super::account::*;
 use super::helper::*;
@@ -17,6 +17,15 @@ use super::store::*;
 
 pub const CERT_FILENAME: &str = "acme_cert.pem";
 pub const KEY_FILENAME: &str = "acme_key.pem";
+
+#[derive(Debug, Clone)]
+pub struct AcmeConfig {
+    pub domains: Vec<Domain>,
+    pub credentials: PathBuf,
+
+    // in hours
+    pub check_interval: u64,
+}
 
 /// clonable handler to Porto's main TLS struct
 #[derive(Clone)]
@@ -37,14 +46,11 @@ struct PortoACMEInner {
 impl PortoACME {
     /// initalizes the ACME engine, requires a service ready for HTTP challenges to be recieved
     pub async fn init(
-        config: TlsConfig,
+        config: AcmeConfig,
         provider: AcmeProvider,
         chall_handle: ChallStoreHandle,
     ) -> Result<Self> {
-        let path = config
-            .credentials
-            .clone()
-            .ok_or_else(|| anyhow!("no credentials path provided"))?;
+        let path = config.credentials;
 
         debug!(path = %path.display(), "initializing TLS Service");
 
@@ -52,7 +58,7 @@ impl PortoACME {
         let key_path = path.join(KEY_FILENAME);
 
         let cert_store = Arc::new(CertStore::new(cert_path, key_path));
-        let server_config = setup_rustls_config(&config, cert_store.clone());
+        let server_config = setup_rustls_config(cert_store.clone());
 
         let store = PortoACME {
             inner: Arc::new(PortoACMEInner {
