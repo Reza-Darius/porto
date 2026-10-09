@@ -128,6 +128,8 @@ pub struct TlsConfig {
     // if this is enabled, the other paths are ignored
     pub auto_cert: bool,
     pub credentials: Option<PathBuf>,
+    // in hours
+    pub check_interval: u64,
 
     // for simple TLS
     pub cert_path: Option<PathBuf>,
@@ -156,11 +158,15 @@ impl Default for TlsConfig {
     fn default() -> Self {
         Self {
             enabled: true,
+            domains: Vec::new(),
+
             auto_cert: false,
+            credentials: None,
+            check_interval: 24,
+
             cert_path: None,
             key_path: None,
-            credentials: None,
-            domains: Vec::new(),
+
         }
     }
 }

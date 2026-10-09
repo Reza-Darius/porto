@@ -8,3 +8,4 @@ mod order;
 mod store;
 
 pub use acme::{AcmeProvider, PortoACME};
+pub use challenge::{ChallStoreHandle, setup_chall_server};
