@@ -24,9 +24,10 @@ const DIRECTORY_URL: &str = "https://localhost:14000/dir";
 // the host name we want to test for
 const DEBUG_DNS: &str = "acmetest.com";
 
-// this CA is used to talk to the pebble container
+// this CA too is used to talk to the pebble container
 const PEBBLE_CLIENT_CA_PATH: &str = "pebble.minica.pem";
-// the root CA with which ACME requests are signed by are retrieved here
+// the CA root with which ACME certs are signed by is regenerated every time, so we fetch it from
+// here:
 const PEBBLE_CA_URL: &str = "https://localhost:15000/roots/0";
 
 const TLS_LISTEN_ADDR: &str = "0.0.0.0:8000";
@@ -84,6 +85,8 @@ pub async fn get_client(
         proxy: proxy_addr,
         set: domains.collect(),
     };
+
+    // fetch the root CA from the docker container
     let file = std::fs::read(PEBBLE_CLIENT_CA_PATH).unwrap();
     let cert = reqwest::Certificate::from_pem(&file).unwrap();
 
