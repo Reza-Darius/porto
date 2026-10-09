@@ -125,8 +125,8 @@ pub struct TlsConfig {
     pub enabled: bool,
     pub domains: Vec<Domain>,
 
-    // if this is enabled, the other paths are ignored
-    pub auto_cert: bool,
+    /// enables ACME, if this is enabled, the other paths are ignored
+    pub auto: bool,
 
     // for simple TLS
     pub cert_path: Option<PathBuf>,
@@ -143,8 +143,8 @@ impl TlsConfig {
         }
 
         // we cant have acme enabled and tls disabled, set both to disabled
-        if self.auto_cert && !self.enabled {
-            self.auto_cert = false;
+        if self.auto && !self.enabled {
+            self.auto = false;
         }
 
         Ok(())
@@ -156,7 +156,7 @@ impl Default for TlsConfig {
         Self {
             enabled: true,
             domains: Vec::new(),
-            auto_cert: false,
+            auto: false,
 
             cert_path: None,
             key_path: None,
@@ -353,7 +353,7 @@ mod config_tests {
 
             [tls]
             tls = true
-            auto_cert = false
+            auto = false
             cert_path = "credentials/example_cert.pem"
             key_path = "credentials/example_key.pem"
 
@@ -378,7 +378,7 @@ mod config_tests {
         let config = parse_config_file("testporto.toml").unwrap();
 
         assert!(config.tls.enabled);
-        assert!(!config.tls.auto_cert);
+        assert!(!config.tls.auto);
         assert_eq!(config.proxy.len(), 2);
         eprintln!("{:#?}", config);
 

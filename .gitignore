@@ -6,7 +6,6 @@ perf.data.old
 profile.json.gz
 
 credentials/test
-pebble/
 example_cert.pem
 example_key.pem
 debug.log

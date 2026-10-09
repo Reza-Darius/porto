@@ -5,7 +5,6 @@ use std::time::Duration;
 
 use anyhow::{Result, anyhow};
 use http::StatusCode;
-use porto::config::TlsConfig;
 use porto::errors::TraceError;
 use porto::tls::{AcmeConfig, AcmeProvider, ChallStoreHandle, PortoACME, setup_chall_server};
 use porto::utils::Domain;
@@ -25,7 +24,7 @@ const DIRECTORY_URL: &str = "https://localhost:14000/dir";
 const DEBUG_DNS: &str = "acmetest.com";
 
 /// this CA too is used to talk to the pebble container
-const PEBBLE_CLIENT_CA_PATH: &str = "pebble.minica.pem";
+const PEBBLE_CLIENT_CA_PATH: &str = "tests/pebble/pebble.minica.pem";
 /// the CA root with which ACME certs are signed by is regenerated every time, so we fetch it from
 /// here:
 const PEBBLE_CA_URL: &str = "https://localhost:15000/roots/0";
@@ -39,14 +38,6 @@ async fn is_tls(stream: &TcpStream) -> bool {
         // a https "client hello" starts with 0x16
         Ok(1) => peek_buf[0] == 0x16,
         _ => false,
-    }
-}
-
-fn clear_dir() {
-    let dir = std::fs::read_dir(CRED_DIR).unwrap();
-    for file in dir {
-        let entry = file.unwrap();
-        std::fs::remove_file(entry.path()).unwrap();
     }
 }
 
@@ -66,10 +57,12 @@ async fn setup_pebble() {
             // it searches in tests/tests/docker-compose.yml
 
             let compose_path =
-                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/docker-compose.yml");
-
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/pebble/docker-compose.yml");
             let mut compose = DockerCompose::with_local_client(&[&compose_path])
                 .with_project_name("porto-acme-test");
+
+            // let mut compose = DockerCompose::with_local_client(&["tests/pebble/docker-compose.yml"])
+            //     .with_project_name("porto-acme-test");
 
             compose.up().await.unwrap();
             compose
@@ -141,18 +134,12 @@ async fn acme_test_init() -> Result<()> {
     - curl --http1.1 --resolve acmetest.com:8000:127.0.0.1 https://acmetest.com:8000 -k -v
 
     */
-    setup_pebble().await;
-    setup_dir();
 
-    let cfg = AcmeConfig {
-        domains: vec![Domain::parse(DEBUG_DNS)?],
-        credentials: PathBuf::from(CRED_DIR),
-        check_interval: 24,
-    };
+    setup_dir();
+    setup_pebble().await;
 
     // setup http1 chall server
     let chall_store = ChallStoreHandle::new();
-
     setup_chall_server(CHALL_LISTEN_ADDR.parse().unwrap(), chall_store.clone());
 
     // prevent race condition to make sure the chall server is up and running before
@@ -160,6 +147,11 @@ async fn acme_test_init() -> Result<()> {
     tokio::time::sleep(Duration::from_secs(1)).await;
 
     // setup TLS server
+    let cfg = AcmeConfig {
+        domains: vec![Domain::parse(DEBUG_DNS)?],
+        cred_path: PathBuf::from(CRED_DIR),
+        check_interval: 24,
+    };
     let provider = AcmeProvider::Pebble(DIRECTORY_URL.to_string());
     let tls = PortoACME::init(cfg, provider, chall_store).await?;
     let tls_listener = tokio::net::TcpListener::bind(TLS_LISTEN_ADDR).await?;

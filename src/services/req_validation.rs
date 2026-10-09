@@ -12,7 +12,6 @@ use crate::utils::ResponseBody;
 const BODY_SIZE_LIMIT: u32 = 1 << 20; // 1 MB
 const HEADER_SIZE_LIMIT: u32 = (1 << 10) * 8; // 8 Kb
 
-/// an IP based rate limiter using token buckets
 #[derive(Clone)]
 pub struct RequestValidationLayer;
 

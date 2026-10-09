@@ -21,7 +21,7 @@ pub const KEY_FILENAME: &str = "acme_key.pem";
 #[derive(Debug, Clone)]
 pub struct AcmeConfig {
     pub domains: Vec<Domain>,
-    pub credentials: PathBuf,
+    pub cred_path: PathBuf,
 
     // in hours
     pub check_interval: u64,
@@ -50,7 +50,7 @@ impl PortoACME {
         provider: AcmeProvider,
         chall_handle: ChallStoreHandle,
     ) -> Result<Self> {
-        let path = config.credentials;
+        let path = config.cred_path;
 
         debug!(path = %path.display(), "initializing TLS Service");
 

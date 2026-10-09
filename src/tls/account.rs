@@ -60,7 +60,7 @@ async fn create_pebble_acc(url: String) -> Result<Account> {
         only_return_existing: false,
     };
 
-    let acc = Account::builder_with_root("pebble.minica.pem")?
+    let acc = Account::builder_with_root("tests/pebble/pebble.minica.pem")?
         .create(&acc, url, None)
         .await?;
     debug!("we got an account");
