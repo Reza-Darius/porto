@@ -18,16 +18,16 @@ use tokio::net::TcpStream;
 use tower::BoxError;
 use tracing::{debug, info};
 
-// pebble sends challenges to port 5002
+/// pebble sends challenges to port 5002
 const CHALL_LISTEN_ADDR: &str = "0.0.0.0:5002";
 const DIRECTORY_URL: &str = "https://localhost:14000/dir";
-// the host name we want to test for
+/// the host name we want to test for
 const DEBUG_DNS: &str = "acmetest.com";
 
-// this CA too is used to talk to the pebble container
+/// this CA too is used to talk to the pebble container
 const PEBBLE_CLIENT_CA_PATH: &str = "pebble.minica.pem";
-// the CA root with which ACME certs are signed by is regenerated every time, so we fetch it from
-// here:
+/// the CA root with which ACME certs are signed by is regenerated every time, so we fetch it from
+/// here:
 const PEBBLE_CA_URL: &str = "https://localhost:15000/roots/0";
 
 const TLS_LISTEN_ADDR: &str = "0.0.0.0:8000";
@@ -50,11 +50,13 @@ fn clear_dir() {
     }
 }
 
+/// helper function to reset saved certificates
 fn setup_dir() {
     let _ = std::fs::remove_dir_all(CRED_DIR);
     let _ = std::fs::create_dir(CRED_DIR);
 }
 
+/// tests are multi threaded, this makes sure we only use one container instance for all of them
 static PEBBLE: tokio::sync::OnceCell<DockerCompose> = tokio::sync::OnceCell::const_new();
 
 async fn setup_pebble() {
