@@ -93,7 +93,8 @@ impl Future for UpstreamResponseFuture {
                 // map body
                 let mut resp = resp.map(|r| r.map_err(Into::into).boxed_unsync());
 
-                resp.extensions_mut().insert(this.peer.take().expect("peer info needs to be there"));
+                resp.extensions_mut()
+                    .insert(this.peer.take().expect("peer info needs to be there"));
 
                 Ok(resp)
             }

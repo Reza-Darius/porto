@@ -272,9 +272,11 @@ mod test {
         assert_eq!(ctr, CtrlMsg::Stop);
     }
 
-    #[test(tokio::test)] #[ignore = "this test requires sudo privileges"]
+    #[test(tokio::test)]
+    #[ignore = "this test requires sudo privileges"]
     async fn remote_bash() {
-        let url = "https://raw.githubusercontent.com/Reza-Darius/porto/refs/heads/main/scripts/test.sh";
+        let url =
+            "https://raw.githubusercontent.com/Reza-Darius/porto/refs/heads/main/scripts/test.sh";
         execute_remote_script(url).await.unwrap();
     }
 }

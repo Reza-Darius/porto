@@ -90,7 +90,9 @@ impl<B> ResponseBody<B> {
     pub(crate) fn with_msg(str: &str) -> Self {
         Self {
             inner: ResponseBodyInner::Custom {
-                body: Full::from(str.to_string()).map_err(Into::into).boxed_unsync(),
+                body: Full::from(str.to_string())
+                    .map_err(Into::into)
+                    .boxed_unsync(),
             },
         }
     }
@@ -98,21 +100,16 @@ impl<B> ResponseBody<B> {
     /// create a empty body
     pub(crate) fn empty() -> Self {
         Self {
-            inner: ResponseBodyInner::Custom {
-                body: empty(),
-            },
+            inner: ResponseBodyInner::Custom { body: empty() },
         }
     }
 
     /// create a empty body
     pub(crate) fn full(data: impl Into<Bytes>) -> Self {
         Self {
-            inner: ResponseBodyInner::Custom {
-                body: full(data),
-            },
+            inner: ResponseBodyInner::Custom { body: full(data) },
         }
     }
-
 
     /// wraps the body, use this if you want to pass the body unaltered
     pub(crate) fn wrap(body: B) -> Self {

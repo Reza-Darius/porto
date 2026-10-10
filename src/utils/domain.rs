@@ -117,4 +117,3 @@ mod test {
         assert_eq!(s.hash_one(&d), s.hash_one("example.com"));
     }
 }
-

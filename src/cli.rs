@@ -46,6 +46,5 @@ pub struct RunArgs {
 pub struct ConfigCmdArgs {
     /// initializes a config template
     #[arg(short, default_value_t = false)]
-    pub init: bool
+    pub init: bool,
 }
-

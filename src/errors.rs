@@ -26,7 +26,7 @@ pub trait TraceError<T, E> {
 
 impl<T, E> TraceError<T, E> for Result<T, E>
 where
-    E: Display
+    E: Display,
 {
     #[inline(always)]
     fn trace_err(self) -> Result<T, E> {

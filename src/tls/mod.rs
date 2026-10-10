@@ -7,5 +7,5 @@ mod helper;
 mod order;
 mod store;
 
-pub use acme::{AcmeProvider, PortoACME, AcmeConfig};
+pub use acme::{AcmeConfig, AcmeProvider, PortoACME};
 pub use challenge::{ChallStoreHandle, setup_chall_server};

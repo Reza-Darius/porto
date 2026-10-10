@@ -16,7 +16,6 @@ use tracing::{debug, error, info, instrument, warn};
 use crate::{
     cli::RunArgs,
     ctrl::SD_CTRL_SOCK_PATH,
-    tls::AcmeProvider,
     utils::{Domain, Peer, PeerAddr},
 };
 
@@ -131,7 +130,6 @@ pub struct TlsConfig {
     // for simple TLS
     pub cert_path: Option<PathBuf>,
     pub key_path: Option<PathBuf>,
-
 }
 
 impl TlsConfig {
@@ -160,7 +158,6 @@ impl Default for TlsConfig {
 
             cert_path: None,
             key_path: None,
-
         }
     }
 }

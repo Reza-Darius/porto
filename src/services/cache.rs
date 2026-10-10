@@ -71,11 +71,9 @@ where
 
                         // we have to carry over the Peer extension
                         request.extensions.insert(
-                            req_parts
-                                .extensions
-                                .get::<Peer>()
-                                .cloned()
-                                .ok_or_else(|| BoxError::from("No Peer info found on request".to_string()))?
+                            req_parts.extensions.get::<Peer>().cloned().ok_or_else(|| {
+                                BoxError::from("No Peer info found on request".to_string())
+                            })?,
                         );
 
                         let new_req = Request::from_parts(request.clone(), req_body);

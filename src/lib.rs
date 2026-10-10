@@ -1,10 +1,9 @@
-pub mod tls;
+pub mod cli;
 pub mod config;
+pub mod ctrl;
 pub mod errors;
+pub mod server;
 pub mod services;
 pub mod setup;
+pub mod tls;
 pub mod utils;
-pub mod server;
-pub mod cli;
-pub mod ctrl;
-

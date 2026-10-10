@@ -14,7 +14,6 @@ use rustls::{
     sign::{self},
 };
 use tracing::debug;
-use tracing::debug_span;
 use tracing::warn;
 use x509_parser::certificate::X509Certificate;
 use x509_parser::nom::AsBytes;
@@ -130,7 +129,7 @@ impl ResolvesServerCert for CertStore {
                 None => {
                     warn!("failed to resolve cert for {name}");
                     None
-                },
+                }
             }
         } else {
             // This kind of resolver requires SNI

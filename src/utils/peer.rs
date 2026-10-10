@@ -15,8 +15,8 @@ use parking_lot::{Mutex, RwLock};
 use serde::Deserialize;
 use tracing::{debug, info};
 
-use crate::config::{PortoConfig, ServiceConfig};
 use super::domain::Domain;
+use crate::config::{PortoConfig, ServiceConfig};
 
 /// monotonic counter for peer ids
 static ID_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -269,4 +269,3 @@ impl PeerProto {
         }
     }
 }
-

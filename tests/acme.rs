@@ -56,8 +56,8 @@ async fn setup_pebble() {
             // for some reason calling "tests/docker-compose.yml" as an argument doesnt find it as
             // it searches in tests/tests/docker-compose.yml
 
-            let compose_path =
-                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/pebble/docker-compose.yml");
+            let compose_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/pebble/docker-compose.yml");
             let mut compose = DockerCompose::with_local_client(&[&compose_path])
                 .with_project_name("porto-acme-test");
 

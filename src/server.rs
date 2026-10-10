@@ -163,4 +163,3 @@ async fn is_tls(stream: &TcpStream) -> bool {
         _ => false,
     }
 }
-
