@@ -124,7 +124,7 @@ async fn acme_worker(acc: Account, store: PortoACME) {
 
     loop {
         timer.tick().await;
-
+        debug!("checking for expired certificates");
         if let Some(domains) = store.inner.cert_store.expired(cert_should_renew) {
             match issue_order(&acc, &store.inner.chall_handle, domains.iter()).await {
                 Ok((cert, key)) => {

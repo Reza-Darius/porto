@@ -22,11 +22,12 @@ pub trait HttpChallengeStore {
 }
 
 /// cheap clonable handle to a store for ACME challenges
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct ChallStoreHandle {
     inner: Arc<ChallStoreInner>,
 }
 
+#[derive(Default)]
 struct ChallStoreInner {
     map: Mutex<HashMap<AcmeToken, KeyAuthorization>>,
 }
