@@ -85,7 +85,7 @@ pub async fn get_client(
     let file = std::fs::read(PEBBLE_CLIENT_CA_PATH).unwrap();
     let cert = reqwest::Certificate::from_pem(&file).unwrap();
 
-    let root_pem = reqwest::Client::builder()
+    let root_pem = ClientBuilder::new()
         .tls_certs_only(std::iter::once(cert))
         .build()
         .unwrap()

@@ -5,7 +5,7 @@ use anyhow::anyhow;
 /// a non-growable ring buffer
 #[derive(Debug)]
 pub struct Queue<T> {
-    data: Vec<MaybeUninit<T>>,
+    data: Box<[MaybeUninit<T>]>,
     len: u16,
     cap: u16,
     /// points to the next vacant slot
@@ -27,13 +27,7 @@ impl<T> Queue<T> {
             cap <= u16::MAX as usize,
             "queue only supports max u16 elements"
         );
-        let mut v = Vec::with_capacity(cap);
-
-        // SAFETY:
-        // we are handling uninitialized data anyways and we are not growing the queue cap
-        unsafe {
-            v.set_len(cap);
-        }
+        let v = Box::new_uninit_slice(cap);
 
         Queue {
             data: v,
@@ -160,7 +154,7 @@ impl<T> Iterator for QueueIter<T> {
 }
 
 pub struct QueueRefIter<'a, T> {
-    data: &'a Vec<MaybeUninit<T>>,
+    data: &'a [MaybeUninit<T>],
     tail: usize,
     cap: u16,
     len: u16,
