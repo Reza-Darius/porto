@@ -244,7 +244,7 @@ where
 
     // wrapper service to avoide double service calls and because "Singleton" isnt nameable
     let http2 = service_fn(move |req: Request<_>| {
-        let mut http2_svc = http2.clone();
+        let http2_svc = http2.clone();
         async move {
             debug!("calling connector");
             let peer = req
@@ -253,10 +253,11 @@ where
                 .cloned()
                 .ok_or_else(|| anyhow!("PeerAddr extension not found"))?;
 
-            let Ok(mut sender) = http2_svc
-                .ready() // important to call ready here, otherwise the worker panics
-                .await?
-                .call(peer.addr().clone()) // call pool
+            let Ok(sender) = http2_svc
+                .oneshot(peer.addr().clone())
+                // .ready() // important to call ready here, otherwise the worker panics
+                // .await?
+                // .call(peer.addr().clone()) // call pool
                 .await
                 .inspect_err(|e| tracing::error!(%e, "couldnt get sender"))
             else {
@@ -265,9 +266,10 @@ where
 
             debug!("sending request");
             sender
-                .ready()
-                .await?
-                .call(req)
+                .oneshot(req)
+                // .ready()
+                // .await?
+                // .call(req)
                 .await
                 .map(|mut resp| {
                     resp.extensions_mut().insert(peer);

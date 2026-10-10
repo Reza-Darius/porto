@@ -8,8 +8,8 @@ use http::StatusCode;
 use porto::errors::TraceError;
 use porto::tls::{AcmeConfig, AcmeProvider, ChallStoreHandle, PortoACME, setup_chall_server};
 use porto::utils::Domain;
-use reqwest::ClientBuilder;
 use reqwest::dns::Resolve;
+use reqwest::{Certificate, ClientBuilder};
 use test_log::test;
 use testcontainers::compose::DockerCompose;
 use tokio::io::AsyncWriteExt;
@@ -49,6 +49,7 @@ fn setup_dir() {
 
 /// tests are multi threaded, this makes sure we only use one container instance for all of them
 static PEBBLE: tokio::sync::OnceCell<DockerCompose> = tokio::sync::OnceCell::const_new();
+static PEBBLE_CA: tokio::sync::OnceCell<Certificate> = tokio::sync::OnceCell::const_new();
 
 async fn setup_pebble() {
     PEBBLE
@@ -65,6 +66,27 @@ async fn setup_pebble() {
             //     .with_project_name("porto-acme-test");
 
             compose.up().await.unwrap();
+
+            // fetch the root CA from the docker container
+            let file = std::fs::read(PEBBLE_CLIENT_CA_PATH).unwrap();
+            let cert = reqwest::Certificate::from_pem(&file).unwrap();
+
+            let root_pem = ClientBuilder::new()
+                .tls_certs_only(std::iter::once(cert))
+                .build()
+                .unwrap()
+                .get(PEBBLE_CA_URL)
+                .send()
+                .await
+                .unwrap()
+                .bytes()
+                .await
+                .unwrap();
+
+            PEBBLE_CA
+                .set(Certificate::from_pem(&root_pem).unwrap())
+                .unwrap();
+
             compose
         })
         .await;
@@ -81,23 +103,7 @@ pub async fn get_client(
         set: domains.collect(),
     };
 
-    // fetch the root CA from the docker container
-    let file = std::fs::read(PEBBLE_CLIENT_CA_PATH).unwrap();
-    let cert = reqwest::Certificate::from_pem(&file).unwrap();
-
-    let root_pem = ClientBuilder::new()
-        .tls_certs_only(std::iter::once(cert))
-        .build()
-        .unwrap()
-        .get(PEBBLE_CA_URL)
-        .send()
-        .await
-        .unwrap()
-        .bytes()
-        .await
-        .unwrap();
-
-    let cert = reqwest::Certificate::from_pem(&root_pem).unwrap();
+    let cert = PEBBLE_CA.get().unwrap().clone();
 
     ClientBuilder::new()
         .http1_only()

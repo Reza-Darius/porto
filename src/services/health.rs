@@ -13,7 +13,9 @@ use tracing::{debug, info, warn};
 
 use crate::{errors::TraceError, services::upstream::hyper_client::UpstreamService, utils::*};
 
-// this is a singleton running in the background
+/// sinlgeton servicer running in the background
+///
+/// periodically sends health requests to backends to see if they are reachable
 struct HealthService {
     /// client to send requests with to backends
     client: UpstreamService<Body>,
