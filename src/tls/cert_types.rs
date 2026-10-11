@@ -6,7 +6,7 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
 use serde::{Deserialize, Serialize};
 use x509_parser::pem::parse_x509_pem;
 
-use crate::tls::helper::cert_should_renew;
+use crate::tls::helper::cert_renew_third_fraction;
 
 /// PEM encoded certificate chain
 #[derive(Debug, Clone, Display, Hash, Eq, PartialEq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -30,7 +30,7 @@ impl CertChainPem {
         let (_, pem) = parse_x509_pem(self.as_str().as_bytes()).unwrap();
         let cert = pem.parse_x509().unwrap();
 
-        cert_should_renew(&cert)
+        cert_renew_third_fraction(&cert)
     }
 
     pub fn to_der(&self) -> Result<Vec<CertificateDer<'_>>> {

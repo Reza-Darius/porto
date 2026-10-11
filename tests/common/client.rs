@@ -14,7 +14,6 @@ pub fn get_client(
         set: domains.collect(),
     };
     ClientBuilder::new()
-        .http1_only()
         .dns_resolver(resolver)
         .build()
         .unwrap()

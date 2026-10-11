@@ -50,7 +50,7 @@ http-body-util = "0.1"
 http-cache-semantics = "3.0.0"
 hyper = { version = "1.0.0", features = ["full"] }
 hyper-rustls = "0.27.7"
-hyper-util = { version = "0.1", features = ["client", "full", "tokio"] }
+hyper-util = { version = "0.1", features = ["full"] }
 hyperlocal = "0.9.1"
 instant-acme = { version = "0.8.5", features = ["hyper-rustls"] }
 parking_lot = "0.12.5"

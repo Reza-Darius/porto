@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::Once;
 use std::time::Duration;
 
 use anyhow::{Result, anyhow};
@@ -17,20 +18,12 @@ use tokio::net::TcpStream;
 use tower::BoxError;
 use tracing::{debug, info};
 
-/// pebble sends challenges to port 5002
-const CHALL_LISTEN_ADDR: &str = "0.0.0.0:5002";
-const DIRECTORY_URL: &str = "https://localhost:14000/dir";
-/// the host name we want to test for
-const DEBUG_DNS: &str = "acmetest.com";
-
 /// this CA too is used to talk to the pebble container
 const PEBBLE_CLIENT_CA_PATH: &str = "tests/pebble/pebble.minica.pem";
 /// the CA root with which ACME certs are signed by is regenerated every time, so we fetch it from
 /// here:
 const PEBBLE_CA_URL: &str = "https://localhost:15000/roots/0";
-
-const TLS_LISTEN_ADDR: &str = "0.0.0.0:8000";
-const CRED_DIR: &str = "credentials/test/";
+const PEBBLE_DIR_URL: &str = "https://localhost:14000/dir";
 
 async fn is_tls(stream: &TcpStream) -> bool {
     let mut peek_buf = [0u8; 1];
@@ -41,10 +34,15 @@ async fn is_tls(stream: &TcpStream) -> bool {
     }
 }
 
+const CRED_DIR: &str = "credentials/test/";
+static DIR_INIT: Once = Once::new();
+
 /// helper function to reset saved certificates
 fn setup_dir() {
-    let _ = std::fs::remove_dir_all(CRED_DIR);
-    let _ = std::fs::create_dir(CRED_DIR);
+    DIR_INIT.call_once(|| {
+        let _ = std::fs::remove_dir_all(CRED_DIR);
+        let _ = std::fs::create_dir(CRED_DIR);
+    });
 }
 
 /// tests are multi threaded, this makes sure we only use one container instance for all of them
@@ -52,6 +50,8 @@ static PEBBLE: tokio::sync::OnceCell<DockerCompose> = tokio::sync::OnceCell::con
 static PEBBLE_CA: tokio::sync::OnceCell<Certificate> = tokio::sync::OnceCell::const_new();
 
 async fn setup_pebble() {
+    setup_dir();
+
     PEBBLE
         .get_or_init(|| async {
             // for some reason calling "tests/docker-compose.yml" as an argument doesnt find it as
@@ -131,17 +131,15 @@ impl Resolve for TestResolver {
 }
 
 #[test(tokio::test)]
-async fn acme_test_init() -> Result<()> {
+async fn init_and_issue() -> Result<()> {
     const RES_TEXT: &str = "HTTP/1.1 200 OK\r\n\r\n";
-    /*
-    HOW TO TEST:
 
-    - start acme server: docker compose up
-    - curl --http1.1 --resolve acmetest.com:8000:127.0.0.1 https://acmetest.com:8000 -k -v
+    /// the host name we want to test for
+    const DEBUG_DNS: &str = "acmetest.com";
+    /// pebble sends challenges to port 5002
+    const CHALL_LISTEN_ADDR: &str = "0.0.0.0:5002";
+    const TLS_LISTEN_ADDR: &str = "0.0.0.0:8000";
 
-    */
-
-    setup_dir();
     setup_pebble().await;
 
     // setup http1 chall server
@@ -156,9 +154,9 @@ async fn acme_test_init() -> Result<()> {
     let cfg = AcmeConfig {
         domains: vec![Domain::parse(DEBUG_DNS)?],
         cred_path: PathBuf::from(CRED_DIR),
-        check_interval: 24,
+        check_interval: 3,
     };
-    let provider = AcmeProvider::Pebble(DIRECTORY_URL.to_string());
+    let provider = AcmeProvider::Pebble(PEBBLE_DIR_URL.to_string());
     let tls = PortoACME::init(cfg, provider, chall_store).await?;
     let tls_listener = tokio::net::TcpListener::bind(TLS_LISTEN_ADDR).await?;
 
@@ -205,3 +203,72 @@ async fn acme_test_init() -> Result<()> {
 
     Ok(())
 }
+
+// #[test(tokio::test)]
+// async fn renewal() -> Result<()> {
+//     /// the host name we want to test for
+//     const DEBUG_DNS: &str = "acmerenewaltest.com";
+//     const RES_TEXT: &str = "HTTP/1.1 200 OK\r\n\r\n";
+//     setup_pebble().await;
+//
+//     // setup http1 chall server
+//     let chall_store = ChallStoreHandle::new();
+//     setup_chall_server(CHALL_LISTEN_ADDR.parse().unwrap(), chall_store.clone());
+//
+//     // prevent race condition to make sure the chall server is up and running before
+//     // initilaizing ACME
+//     tokio::time::sleep(Duration::from_secs(1)).await;
+//
+//     // setup TLS server
+//     let cfg = AcmeConfig {
+//         domains: vec![Domain::parse(DEBUG_DNS)?],
+//         cred_path: PathBuf::from(CRED_DIR),
+//         check_interval: 5,
+//     };
+//     let provider = AcmeProvider::Pebble(PEBBLE_DIR_URL.to_string());
+//     let tls = PortoACME::init(cfg, provider, chall_store).await?;
+//     let tls_listener = tokio::net::TcpListener::bind(TLS_LISTEN_ADDR).await?;
+//
+//     info!("listening for TLS requests on {TLS_LISTEN_ADDR}");
+//
+//     let mut set = tokio::task::JoinSet::new();
+//     set.spawn(async move {
+//         while let Ok((con, _)) = tls_listener.accept().await.trace_err() {
+//             debug!("got connection");
+//             if is_tls(&con).await {
+//                 let acceptor = tls.acceptor();
+//                 match acceptor.accept(con).await {
+//                     Ok(mut s) => {
+//                         debug!("TLS accepted!");
+//                         s.write_all(RES_TEXT.as_bytes()).await?;
+//                         s.shutdown().await?;
+//                         break;
+//                     }
+//                     Err(e) => return Err(anyhow!("error when accepting TLS: {}", e)),
+//                 };
+//             }
+//             // panic!("got non TLS request");
+//         }
+//         Ok::<(), anyhow::Error>(())
+//     });
+//
+//     set.spawn(async {
+//         let client = get_client(std::iter::once(DEBUG_DNS), TLS_LISTEN_ADDR.parse().unwrap()).await;
+//
+//         let res = client
+//             .get(format!("https://{}", DEBUG_DNS))
+//             .send()
+//             .await
+//             .unwrap();
+//
+//         match res.status() {
+//             StatusCode::OK => Ok(()),
+//             _ => Err(anyhow!("got a bad response")),
+//         }
+//     });
+//
+//     let res = set.join_all().await;
+//     assert!(res.iter().all(Result::is_ok));
+//
+//     Ok(())
+// }

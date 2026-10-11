@@ -23,7 +23,7 @@ pub struct AcmeConfig {
     pub domains: Vec<Domain>,
     pub cred_path: PathBuf,
 
-    // in hours
+    /// in seconds
     pub check_interval: u64,
 }
 
@@ -88,6 +88,12 @@ impl PortoACME {
     }
 }
 
+#[derive(Clone, Debug)]
+pub enum AcmeProvider {
+    Pebble(String),
+    LetsEncrypt(LetsEncrypt),
+}
+
 #[instrument(skip_all)]
 async fn initialize_store(domains: Vec<Domain>, acc: &Account, store: &PortoACME) -> Result<()> {
     // can we initalize from file?
@@ -104,28 +110,15 @@ async fn initialize_store(domains: Vec<Domain>, acc: &Account, store: &PortoACME
     order_and_store(domains, acc, store).await
 }
 
-async fn order_and_store(domains: Vec<Domain>, acc: &Account, store: &PortoACME) -> Result<()> {
-    issue_order(acc, &store.inner.chall_handle, domains.iter())
-        .await
-        .and_then(|(cert, key)| store.inner.cert_store.store(domains.into_iter(), cert, key))
-}
-
-#[derive(Clone, Debug)]
-pub enum AcmeProvider {
-    Pebble(String),
-    LetsEncrypt(LetsEncrypt),
-}
-
 #[instrument(skip_all)]
 async fn acme_worker(acc: Account, store: PortoACME) {
-    // let span = debug_span!(target: "ACME", "ACME_worker");
-    // let _guard = span.enter();
-    let mut timer = tokio::time::interval(Duration::from_hours(store.inner.check_interval));
+    let mut timer = tokio::time::interval(Duration::from_secs(store.inner.check_interval));
 
     loop {
         timer.tick().await;
         debug!("checking for expired certificates");
-        if let Some(domains) = store.inner.cert_store.expired(cert_should_renew) {
+        if let Some(domains) = store.inner.cert_store.expired(cert_renew_debug) {
+        // if let Some(domains) = store.inner.cert_store.expired(cert_renew_third_fraction) {
             match issue_order(&acc, &store.inner.chall_handle, domains.iter()).await {
                 Ok((cert, key)) => {
                     let _ = store
@@ -138,4 +131,10 @@ async fn acme_worker(acc: Account, store: PortoACME) {
             }
         };
     }
+}
+
+async fn order_and_store(domains: Vec<Domain>, acc: &Account, store: &PortoACME) -> Result<()> {
+    issue_order(acc, &store.inner.chall_handle, domains.iter())
+        .await
+        .and_then(|(cert, key)| store.inner.cert_store.store(domains.into_iter(), cert, key))
 }

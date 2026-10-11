@@ -35,3 +35,4 @@ services:
       - 15000:15000 # HTTPS Management API
     extra_hosts:
       - "acmetest.com:127.0.0.1"
+      # - "acmerenewaltest.com:127.0.0.1"

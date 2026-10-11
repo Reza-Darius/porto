@@ -20,19 +20,44 @@ pub fn setup_rustls_config(resolver: Arc<impl ResolvesServerCert + 'static>) -> 
     server_config
 }
 
+/// a cert becomes eligble for renewal when a third of its validity lifetime remains
 #[inline(always)]
-pub fn cert_should_renew(cert: &X509Certificate) -> bool {
-    // renew in the last 1/3 of lifetime
+pub fn cert_renew_third_fraction(cert: &X509Certificate) -> bool {
+    /// renew in the last 1/3 of lifetime
     const RENEW_LIFETIME_FRACTION: i64 = 3;
+    /// one month
     const MAX_RENEW_WINDOW_SECS: i64 = 30 * 24 * 60 * 60;
-
     let validity = cert.validity();
+
+    // cert times are UNIX timestamps
+
+    // not_before = start date at which the certificate becomes valid
     let not_before = validity.not_before.timestamp();
+    // not_after = time and date at which the certificaet is no lange valid
     let not_after = validity.not_after.timestamp();
+
     let now = OffsetDateTime::now_utc().unix_timestamp();
 
     let lifetime = (not_after - not_before).max(0);
     let window = (lifetime / RENEW_LIFETIME_FRACTION).min(MAX_RENEW_WINDOW_SECS);
 
     now >= (not_after - window)
+}
+
+/// a cert is eligble for renewal 5 seconds after it has become valid
+/// 
+/// for debug/testing purposes only!
+#[inline(always)]
+pub fn cert_renew_debug(cert: &X509Certificate) -> bool {
+    /// 5 seconds
+    const RENEW_WINDOW: i64 = 5;
+    let validity = cert.validity();
+
+    // cert times are UNIX timestamps
+
+    // not_before = start date at which the certificate becomes valid
+    let not_before = validity.not_before.timestamp();
+    let now = OffsetDateTime::now_utc().unix_timestamp();
+
+    now >= (not_before + RENEW_WINDOW)
 }
