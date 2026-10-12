@@ -4,7 +4,12 @@ use http_body_util::BodyExt;
 use hyper::StatusCode;
 use tower::{ServiceBuilder, ServiceExt};
 use tower_http::{
-    catch_panic::CatchPanicLayer, compression::{CompressionLayer, DefaultPredicate, Predicate}, limit::RequestBodyLimitLayer, normalize_path::NormalizePathLayer, timeout::TimeoutLayer, trace::TraceLayer,
+    catch_panic::CatchPanicLayer,
+    compression::{CompressionLayer, DefaultPredicate, Predicate},
+    limit::RequestBodyLimitLayer,
+    normalize_path::NormalizePathLayer,
+    timeout::TimeoutLayer,
+    trace::TraceLayer,
 };
 
 use crate::{
@@ -12,7 +17,7 @@ use crate::{
     services::{
         HealthEndpoint, HealthServiceConfig,
         addr::AddrServiceLayer,
-        comp::{PeerCompSettings},
+        comp::PeerCompSettings,
         ratelimit::RateLimitLayer,
         req_validation::RequestValidationLayer,
         setup_health_service,
