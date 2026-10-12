@@ -105,7 +105,7 @@ impl<B> ResponseBody<B> {
     }
 
     /// create a empty body
-    pub(crate) fn full(data: impl Into<Bytes>) -> Self {
+    pub(crate) fn new(data: impl Into<Bytes>) -> Self {
         Self {
             inner: ResponseBodyInner::Custom { body: full(data) },
         }
@@ -123,6 +123,7 @@ pin_project! {
     #[project = BodyProj]
     pub enum ResponseBodyInner<B> {
         Custom {
+            // OPTIMIZE: change this to a Full<Bytes> type
             #[pin]
             body: UnsyncBoxBody<Bytes, BoxError>,
         },

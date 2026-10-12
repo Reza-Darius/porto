@@ -34,7 +34,8 @@ jobs:
           ls -l "$(mkcert -CAROOT)"
           openssl verify -CAfile "$(mkcert -CAROOT)/rootCA.pem" credentials/testpeer.com+2.pem
       - run: cargo test --locked --all-features
-
+        env:
+          RUST_LOG: debug
   # Check formatting with rustfmt
   formatting:
     name: cargo fmt

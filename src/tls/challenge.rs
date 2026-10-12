@@ -164,7 +164,7 @@ where
         debug!(uri_token, "got ACME token");
 
         let resp = match self.store.get_challenge(uri_token) {
-            Some(key) => Response::new(ResponseBody::full(key.as_str().to_string())),
+            Some(key) => Response::new(ResponseBody::new(key.as_str().to_string())),
             None => {
                 warn!("no key authorization found for token!");
                 return Http1ChallFut::NotFound;
