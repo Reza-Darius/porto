@@ -1,16 +1,8 @@
 #![allow(dead_code)]
 
-use tower_http::compression::{Compression, DefaultPredicate, Predicate, predicate::And};
+use tower_http::compression::Predicate;
 
 use crate::utils::Peer;
-
-pub fn setup_response_compresson<S>(
-    inner: S,
-) -> Compression<S, And<DefaultPredicate, PeerCompSettings>> {
-    Compression::new(inner)
-        .gzip(true)
-        .compress_when(DefaultPredicate::new().and(PeerCompSettings))
-}
 
 /// determines compression based on settings per peer
 #[derive(Clone)]

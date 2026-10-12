@@ -4,8 +4,7 @@ use http_body_util::BodyExt;
 use hyper::StatusCode;
 use tower::{ServiceBuilder, ServiceExt};
 use tower_http::{
-    catch_panic::CatchPanicLayer, limit::RequestBodyLimitLayer, normalize_path::NormalizePathLayer,
-    timeout::TimeoutLayer, trace::TraceLayer,
+    catch_panic::CatchPanicLayer, compression::{CompressionLayer, DefaultPredicate, Predicate}, limit::RequestBodyLimitLayer, normalize_path::NormalizePathLayer, timeout::TimeoutLayer, trace::TraceLayer,
 };
 
 use crate::{
@@ -13,7 +12,7 @@ use crate::{
     services::{
         HealthEndpoint, HealthServiceConfig,
         addr::AddrServiceLayer,
-        comp::setup_response_compresson,
+        comp::{PeerCompSettings},
         ratelimit::RateLimitLayer,
         req_validation::RequestValidationLayer,
         setup_health_service,
@@ -38,7 +37,12 @@ pub fn setup_service4(config: &PortoConfig) -> HyperService {
         .layer(RateLimitLayer::new(config.global.limit))
         .layer(RequestValidationLayer::new())
         .layer(RequestBodyLimitLayer::new(4096))
-        .layer_fn(setup_response_compresson)
+        .layer(
+            CompressionLayer::new()
+                .gzip(true)
+                .compress_when(DefaultPredicate::new().and(PeerCompSettings)),
+        )
+        // .layer_fn(setup_response_compresson)
         .layer(NormalizePathLayer::trim_trailing_slash())
         .layer(AddrServiceLayer::new(peers))
         // .service(hyper_client::UpstreamService::new())

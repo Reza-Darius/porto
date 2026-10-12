@@ -85,6 +85,7 @@ where
             return boxfut_err("no Peer info found on request");
         };
         let prot = peer.prot();
+        // OPTIMIZE: use hashbrown hashmap for .entry_ref() here
         let mut svc = match self.table.lock().entry(peer.addr().clone()) {
             std::collections::hash_map::Entry::Occupied(occupied_entry) => {
                 debug!(addr = %occupied_entry.key(), "getting client from table");
