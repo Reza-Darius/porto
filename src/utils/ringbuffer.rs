@@ -176,25 +176,25 @@ impl<'a, T> Iterator for QueueRefIter<'a, T> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
-struct MyElement(String);
-
-impl Drop for MyElement {
-    fn drop(&mut self) {
-        println!("i got dropped!");
-    }
-}
-
 #[cfg(test)]
 mod tests {
     #![allow(unused_results)]
     use super::*;
 
+    #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
+    struct MyElement(String);
+
+    impl Drop for MyElement {
+        fn drop(&mut self) {
+            println!("i got dropped!");
+        }
+    }
+
     #[test]
     fn queue_test() {
         let mut q = Queue::new(10);
-        q.push(MyElement(String::from("hello")));
-        q.push(MyElement(String::from("world")));
+        q.push(MyElement(String::from("hello"))).unwrap();
+        q.push(MyElement(String::from("world"))).unwrap();
         assert_eq!(q.len(), 2);
         assert_eq!(q.pop().unwrap(), MyElement(String::from("hello")));
         assert_eq!(q.pop().unwrap(), MyElement(String::from("world")));
@@ -203,8 +203,8 @@ mod tests {
     #[test]
     fn queue_test2() {
         let mut q = Queue::new(10);
-        q.push(MyElement(String::from("hello")));
-        q.push(MyElement(String::from("world")));
+        q.push(MyElement(String::from("hello"))).unwrap();
+        q.push(MyElement(String::from("world"))).unwrap();
 
         drop(q);
         println!("no more drops");
@@ -215,7 +215,7 @@ mod tests {
         let mut q = Queue::new(10);
 
         for _ in 0..10 {
-            q.push(MyElement(String::from("hello")));
+            q.push(MyElement(String::from("hello"))).unwrap();
         }
         assert!(q.is_full());
         assert!(q.push(MyElement(String::from("hello"))).is_err());
@@ -231,7 +231,7 @@ mod tests {
         let mut q = Queue::new(10);
 
         for _ in 0..10 {
-            q.push(MyElement(String::from("hello")));
+            q.push(MyElement(String::from("hello"))).unwrap();
         }
 
         assert_eq!(q.len(), 10);
@@ -255,7 +255,7 @@ mod tests {
         let mut q = Queue::new(10);
 
         for _ in 0..10 {
-            q.push(MyElement(String::from("hello")));
+            q.push(MyElement(String::from("hello"))).unwrap();
         }
 
         assert_eq!(q.len(), 10);
