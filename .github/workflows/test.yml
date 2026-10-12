@@ -9,7 +9,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+
       - uses: actions-rust-lang/setup-rust-toolchain@v2
+
+      - name: Install mkcert
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libnss3-tools
+          curl -JLO "https://dl.filippo.io/mkcert/latest?for=linux/amd64"
+          chmod +x mkcert-v*-linux-amd64
+          sudo mv mkcert-v*-linux-amd64 /usr/local/bin/mkcert
+
+      - name: Generate test certificates
+        run: |
+          sudo mkcert -install
+          mkdir -p credentials
+          mkcert \
+            -cert-file credentials/testpeer.com+2.pem \
+            -key-file credentials/testpeer.com+2-key.pem \
+            testpeer.com testpeeruds.com rezadarius.de
+
       - run: cargo test --locked --all-features
 
   # Check formatting with rustfmt
@@ -18,9 +37,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+
       # Ensure rustfmt is installed and setup problem matcher
       - uses: actions-rust-lang/setup-rust-toolchain@v2
         with:
           components: rustfmt
+
       - name: Rustfmt Check
         uses: actions-rust-lang/rustfmt@v1
