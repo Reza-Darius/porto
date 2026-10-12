@@ -8,7 +8,7 @@ use crate::tls::acme::AcmeProvider;
 
 const ACCOUNT_FILENAME: &str = "account.json";
 
-/// attempts to open a "cred_path/account" file otherwise creates a new account
+/// attempts to open a "cred_path/account.json" file otherwise creates a new account
 ///
 /// if debug == true it will create a pebble test account
 #[instrument(skip_all)]
@@ -33,7 +33,10 @@ pub async fn get_account(cred_path: impl AsRef<Path>, mode: AcmeProvider) -> Res
     }
 }
 
-async fn create_letsencrypt_acc(acc_path: impl AsRef<Path>, staging: LetsEncrypt) -> Result<Account> {
+async fn create_letsencrypt_acc(
+    acc_path: impl AsRef<Path>,
+    staging: LetsEncrypt,
+) -> Result<Account> {
     debug!("creating new Let's Encrypt account");
 
     let (account, creds) = Account::builder()?
@@ -43,7 +46,6 @@ async fn create_letsencrypt_acc(acc_path: impl AsRef<Path>, staging: LetsEncrypt
                 terms_of_service_agreed: true,
                 only_return_existing: false,
             },
-            // staging enviroment is for testing purposes
             staging.url().to_string(),
             None,
         )
