@@ -13,10 +13,7 @@ pub fn get_client(
         proxy: proxy_addr,
         set: domains.collect(),
     };
-    ClientBuilder::new()
-        .dns_resolver(resolver)
-        .build()
-        .unwrap()
+    ClientBuilder::new().dns_resolver(resolver).build().unwrap()
 }
 
 struct TestResolver {

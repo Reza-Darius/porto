@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
-use http::{StatusCode};
+use http::StatusCode;
 use test_log::test;
 
 mod common;

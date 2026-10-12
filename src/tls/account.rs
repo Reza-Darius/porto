@@ -1,34 +1,39 @@
 use std::path::Path;
 
 use anyhow::{Result, anyhow};
-use bincode::config::Configuration;
 use instant_acme::{Account, AccountCredentials, LetsEncrypt, NewAccount};
-use tracing::{debug, instrument, warn};
+use tracing::{debug, instrument, trace, warn};
 
 use crate::tls::acme::AcmeProvider;
 
-static BINCODE_CONFIG: Configuration = bincode::config::standard();
+const ACCOUNT_FILENAME: &str = "account.json";
 
 /// attempts to open a "cred_path/account" file otherwise creates a new account
 ///
 /// if debug == true it will create a pebble test account
 #[instrument(skip_all)]
-pub async fn get_account(acc_cred_path: impl AsRef<Path>, mode: AcmeProvider) -> Result<Account> {
-    debug!("getting ACME account");
+pub async fn get_account(cred_path: impl AsRef<Path>, mode: AcmeProvider) -> Result<Account> {
+    let cred_path = cred_path.as_ref();
+
+    if !cred_path.is_dir() {
+        return Err(anyhow!("passed path isnt a directory"));
+    }
+
+    let path = cred_path.join(ACCOUNT_FILENAME);
 
     match mode {
-        AcmeProvider::Pebble(url) => create_pebble_acc(url).await,
-        AcmeProvider::LetsEncrypt(staging) => match acc_from_file(&acc_cred_path).await {
+        AcmeProvider::Pebble(url) => create_pebble_acc(url, &path).await,
+        AcmeProvider::LetsEncrypt(staging) => match read_acc_disk(&path).await {
             Ok(acc) => Ok(acc),
             Err(e) => {
-                warn!(err = %e, "couldnt read account from disk");
-                create_letsencrypt_acc(acc_cred_path, staging).await
+                warn!(%e, "couldnt read account from disk");
+                create_letsencrypt_acc(&path, staging).await
             }
         },
     }
 }
 
-async fn create_letsencrypt_acc(path: impl AsRef<Path>, staging: LetsEncrypt) -> Result<Account> {
+async fn create_letsencrypt_acc(acc_path: impl AsRef<Path>, staging: LetsEncrypt) -> Result<Account> {
     debug!("creating new Let's Encrypt account");
 
     let (account, creds) = Account::builder()?
@@ -44,14 +49,12 @@ async fn create_letsencrypt_acc(path: impl AsRef<Path>, staging: LetsEncrypt) ->
         )
         .await?;
 
-    let data =
-        bincode::serde::encode_to_vec::<AccountCredentials, Configuration>(creds, BINCODE_CONFIG)?;
-    std::fs::write(path, data)?;
+    write_acc_disk(&creds, acc_path).await?;
 
     Ok(account)
 }
 
-async fn create_pebble_acc(url: String) -> Result<Account> {
+async fn create_pebble_acc(url: impl Into<String>, acc_path: impl AsRef<Path>) -> Result<Account> {
     debug!("creating new testing account");
 
     let acc = NewAccount {
@@ -60,30 +63,30 @@ async fn create_pebble_acc(url: String) -> Result<Account> {
         only_return_existing: false,
     };
 
-    let acc = Account::builder_with_root("tests/pebble/pebble.minica.pem")?
-        .create(&acc, url, None)
+    let (acc, creds) = Account::builder_with_root("tests/pebble/pebble.minica.pem")?
+        .create(&acc, url.into(), None)
         .await?;
+
+    write_acc_disk(&creds, acc_path).await?;
+
     debug!("we got an account");
 
-    Ok(acc.0)
+    Ok(acc)
 }
 
-async fn acc_from_file(path: impl AsRef<Path>) -> Result<Account> {
-    let path = Path::new(path.as_ref()).join("account");
+async fn read_acc_disk(path: impl AsRef<Path>) -> Result<Account> {
+    trace!("reading ACME acc from file");
 
-    if path.exists() {
-        debug!("reading ACME acc from file");
+    let file = std::fs::read(path)?;
+    let creds = serde_json::from_slice::<AccountCredentials>(&file)?;
+    let acc = Account::builder()?.from_credentials(creds).await?;
 
-        let file = std::fs::read(path)?;
+    Ok(acc)
+}
 
-        let (creds, _) = bincode::serde::decode_from_slice::<AccountCredentials, Configuration>(
-            &file,
-            BINCODE_CONFIG,
-        )?;
+async fn write_acc_disk(cred: &AccountCredentials, acc_path: impl AsRef<Path>) -> Result<()> {
+    trace!("writing ACME acc to file");
 
-        let acc = Account::builder()?.from_credentials(creds).await?;
-
-        return Ok(acc);
-    }
-    Err(anyhow!("credentials dont exist"))
+    let json = serde_json::to_vec_pretty(cred)?;
+    tokio::fs::write(acc_path, json).await.map_err(Into::into)
 }

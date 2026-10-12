@@ -45,7 +45,7 @@ pub fn cert_renew_third_fraction(cert: &X509Certificate) -> bool {
 }
 
 /// a cert is eligble for renewal 5 seconds after it has become valid
-/// 
+///
 /// for debug/testing purposes only!
 #[inline(always)]
 pub fn cert_renew_debug(cert: &X509Certificate) -> bool {

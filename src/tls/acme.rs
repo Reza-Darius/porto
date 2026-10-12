@@ -71,14 +71,15 @@ impl PortoACME {
             }),
         };
 
-        let acc_path = store.inner.cred_path.join("account");
-        let account = get_account(&acc_path, provider).await.unwrap();
+        let debug = matches!(provider, AcmeProvider::Pebble(_));
+
+        let account = get_account(&store.inner.cred_path, provider).await.unwrap();
 
         initialize_store(config.domains, &account, &store)
             .await
             .trace_err()?;
 
-        tokio::spawn(acme_worker(account, store.clone()));
+        tokio::spawn(acme_worker(account, store.clone(), debug));
 
         Ok(store)
     }
@@ -111,14 +112,17 @@ async fn initialize_store(domains: Vec<Domain>, acc: &Account, store: &PortoACME
 }
 
 #[instrument(skip_all)]
-async fn acme_worker(acc: Account, store: PortoACME) {
+async fn acme_worker(acc: Account, store: PortoACME, debug: bool) {
     let mut timer = tokio::time::interval(Duration::from_secs(store.inner.check_interval));
-
+    let renew = if debug {
+        cert_renew_debug
+    } else {
+        cert_renew_third_fraction
+    };
     loop {
         timer.tick().await;
         debug!("checking for expired certificates");
-        if let Some(domains) = store.inner.cert_store.expired(cert_renew_debug) {
-        // if let Some(domains) = store.inner.cert_store.expired(cert_renew_third_fraction) {
+        if let Some(domains) = store.inner.cert_store.expired(renew) {
             match issue_order(&acc, &store.inner.chall_handle, domains.iter()).await {
                 Ok((cert, key)) => {
                     let _ = store
