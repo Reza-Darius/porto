@@ -10,8 +10,9 @@ use std::{
 use http::{Request, Response, StatusCode};
 use parking_lot::Mutex;
 use pin_project_lite::pin_project;
+use thiserror::Error;
 use tower::{BoxError, Layer, Service};
-use tracing::{debug, warn};
+use tracing::{trace, trace_span};
 
 use crate::utils::ResponseBody;
 
@@ -25,15 +26,13 @@ const BUCKET_TIMEOUT: Duration = Duration::from_mins(5);
 /// an IP based rate limiter using token buckets
 #[derive(Clone)]
 pub struct RateLimitLayer {
-    inner: Arc<RateLimiterInner>,
-    enabled: bool,
+    inner: Option<Arc<RateLimiterInner>>,
 }
 
 impl RateLimitLayer {
     pub fn new(enabled: bool) -> Self {
         RateLimitLayer {
-            inner: RateLimiterInner::new(),
-            enabled,
+            inner: enabled.then_some(RateLimiterInner::new()),
         }
     }
 }
@@ -44,31 +43,21 @@ impl<S> Layer<S> for RateLimitLayer {
     fn layer(&self, inner: S) -> Self::Service {
         RateLimiter {
             rl: self.inner.clone(),
-            token: None,
             inner,
-            enabled: self.enabled,
         }
     }
 }
 
-// a simple marker type
-#[derive(Clone, Copy)]
-struct Token;
-
 #[derive(Clone)]
 pub struct RateLimiter<S> {
-    rl: Arc<RateLimiterInner>,
-    token: Option<Token>,
-    enabled: bool,
+    rl: Option<Arc<RateLimiterInner>>,
     inner: S,
 }
 
 impl<S> RateLimiter<S> {
     pub fn new(inner: S, enabled: bool) -> Self {
         RateLimiter {
-            rl: RateLimiterInner::new(),
-            token: None,
-            enabled,
+            rl: enabled.then_some(RateLimiterInner::new()),
             inner,
         }
     }
@@ -77,7 +66,14 @@ impl<S> RateLimiter<S> {
 impl<S> RateLimiter<S> {
     pub fn has_token(&self, addr: SocketAddr) -> bool {
         let addr = addr.ip();
-        match self.rl.map.lock().entry(addr) {
+        match self
+            .rl
+            .as_ref()
+            .expect("this cant be called when disabled")
+            .map
+            .lock()
+            .entry(addr)
+        {
             Entry::Occupied(mut occupied_entry) => {
                 let bucket = occupied_entry.get_mut();
 
@@ -85,15 +81,14 @@ impl<S> RateLimiter<S> {
 
                 if bucket.tokens > 0 {
                     bucket.tokens -= 1;
-                    debug!(tokens = bucket.tokens, "tokens remaining");
+                    trace!(tokens = bucket.tokens, "tokens remaining");
                     true
                 } else {
-                    debug!(%addr, "too many requests");
                     false
                 }
             }
             Entry::Vacant(vacant_entry) => {
-                debug!(%addr, "new bucket");
+                trace!("new bucket");
                 vacant_entry.insert(Bucket::new(BUCKET_SIZE - 1));
                 true
             }
@@ -124,10 +119,9 @@ impl RateLimiterInner {
         rl
     }
     fn cleanup(&self) {
-        self.map
-            .lock()
-            .retain(|_, bucket| bucket.last_update.elapsed() < BUCKET_TIMEOUT);
-        debug!(len = %self.map.lock().len(), "bucket list after cleanup");
+        let mut guard = self.map.lock();
+        guard.retain(|_, bucket| bucket.last_update.elapsed() < BUCKET_TIMEOUT);
+        trace!(len = %guard.len(), "bucket list after cleanup");
     }
 }
 
@@ -184,24 +178,33 @@ where
     }
 
     fn call(&mut self, req: Request<ReqB>) -> Self::Future {
-        if !self.enabled {
+        if self.rl.is_none() {
             return RateLimitFuture::Ok {
                 fut: self.inner.call(req),
             };
-        }
+        };
+
         let Some(addr) = req.extensions().get::<SocketAddr>() else {
             return RateLimitFuture::NoAddrFoun;
         };
+
+        let _span = trace_span!("rate_limiter", client_addr = %addr.ip()).entered();
 
         if self.has_token(*addr) {
             RateLimitFuture::Ok {
                 fut: self.inner.call(req),
             }
         } else {
-            warn!(%addr, "rate limited");
+            trace!("rate limited");
             RateLimitFuture::RateLimited
         }
     }
+}
+
+#[derive(Error, Debug)]
+pub enum RateLimitError {
+    #[error("no address found on request")]
+    NoAddrFound,
 }
 
 pin_project! {
@@ -234,7 +237,7 @@ where
                 .status(StatusCode::TOO_MANY_REQUESTS)
                 .body(ResponseBody::with_msg("too many requests"))
                 .expect("the values are hard coded"))),
-            EnumProj::NoAddrFoun => Poll::Ready(Err("no addr found on request".into())),
+            EnumProj::NoAddrFoun => Poll::Ready(Err(RateLimitError::NoAddrFound.into())),
         }
     }
 }

@@ -344,25 +344,25 @@ mod config_tests {
 
     fn setup_test_conf(path: &Path) {
         let config = r#"
-            [global]
-            bind = "127.0.0.1:3000"
-            limit = true
+        [global]
+        bind = "127.0.0.1:3000"
+        limit = true
 
-            [tls]
-            tls = true
-            auto = false
-            cert_path = "credentials/example_cert.pem"
-            key_path = "credentials/example_key.pem"
+        [tls]
+        tls = true
+        auto = false
+        domains = ["darius.dev", "RezaDarius.de"]
+        cert_path = "credentials/example_cert.pem"
+        key_path = "credentials/example_key.pem"
 
-            [[proxy]]
-            domain = "darius.dev"
-            upstream = "10.0.0.0:67"
+        [[proxy]]
+        domain = "darius.dev"
+        upstream = "10.0.0.0:67"
 
-            [[proxy]]
-            domain = "RezaDarius.de"
-            upstream = "/tmp/darius_art.sock"
-
-            "#;
+        [[proxy]]
+        domain = "RezaDarius.de"
+        upstream = "/tmp/darius_art.sock"
+        "#;
         std::fs::write(path, config.as_bytes()).unwrap();
     }
 
