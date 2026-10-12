@@ -22,13 +22,17 @@ jobs:
 
       - name: Generate test certificates
         run: |
-          sudo mkcert -install
+          mkcert -install
           mkdir -p credentials
           mkcert \
             -cert-file credentials/testpeer.com+2.pem \
             -key-file credentials/testpeer.com+2-key.pem \
             testpeer.com testpeeruds.com rezadarius.de
+          echo "CAROOT=$(mkcert -CAROOT)" >> "$GITHUB_ENV"
 
+      - run: |
+          ls -l "$(mkcert -CAROOT)"
+          openssl verify -CAfile "$(mkcert -CAROOT)/rootCA.pem" credentials/testpeer.com+2.pem
       - run: cargo test --locked --all-features
 
   # Check formatting with rustfmt
