@@ -1,23 +1,12 @@
 use std::borrow::Borrow;
 
+use anyhow::{Result, anyhow};
 use derive_more::{AsRef, Display, From};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
 use serde::{Deserialize, Serialize};
-use time::OffsetDateTime;
-use tokio::net::TcpStream;
 use x509_parser::pem::parse_x509_pem;
 
-/// checks for client hello
-pub async fn is_tls(stream: &TcpStream) -> bool {
-    let mut peek_buf = [0u8; 1];
-    match stream.peek(&mut peek_buf).await {
-        // a https "client hello" starts with 0x16
-        Ok(1) => peek_buf[0] == 0x16,
-        _ => false,
-    }
-}
-
-const RENEWAL_THRESHOLD_DAYS: i64 = 30;
-const RENEWAL_THRESHHOLD: i64 = 60 * 60 * 24 * RENEWAL_THRESHOLD_DAYS;
+use crate::tls::helper::cert_renew_third_fraction;
 
 /// PEM encoded certificate chain
 #[derive(Debug, Clone, Display, Hash, Eq, PartialEq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -41,22 +30,13 @@ impl CertChainPem {
         let (_, pem) = parse_x509_pem(self.as_str().as_bytes()).unwrap();
         let cert = pem.parse_x509().unwrap();
 
-        let not_after = cert.validity().not_after.timestamp();
-        let now = OffsetDateTime::now_utc().unix_timestamp();
-
-        let threshhold = not_after - RENEWAL_THRESHHOLD;
-
-        now >= threshhold
+        cert_renew_third_fraction(&cert)
     }
 
-    pub fn is_expired(&self) -> bool {
-        let (_, pem) = parse_x509_pem(self.as_str().as_bytes()).unwrap();
-        let cert = pem.parse_x509().unwrap();
-
-        let not_after = cert.validity().not_after.timestamp();
-        let now = OffsetDateTime::now_utc().unix_timestamp();
-
-        now >= not_after
+    pub fn to_der(&self) -> Result<Vec<CertificateDer<'_>>> {
+        CertificateDer::pem_slice_iter(self.0.as_bytes())
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| anyhow!("could not read certificate: {e}"))
     }
 }
 
@@ -76,6 +56,11 @@ impl KeyPem {
 
     pub fn as_bytes(&self) -> &[u8] {
         self.0.as_bytes()
+    }
+
+    pub fn to_der(&self) -> Result<PrivateKeyDer<'_>> {
+        PrivateKeyDer::from_pem_slice(self.0.as_bytes())
+            .map_err(|e| anyhow!("could not read key: {e}"))
     }
 }
 

@@ -10,9 +10,7 @@ use tracing::info;
 
 use crate::common::*;
 
-/*
-* every test file should test an instance of porto and backends and not run different configurations
-*/
+// every test file should test an instance of porto and backends and not run different configurations
 
 // WARNING: configs are kinda broken because the servers run with the first config that spawns them
 

@@ -17,7 +17,7 @@ use crate::{
         ratelimit::RateLimitLayer,
         req_validation::RequestValidationLayer,
         setup_health_service,
-        upstream::{connection_table::{ConnectionConfig, ConnectionService}, hyper_client},
+        upstream::connection_table::{ConnectionConfig, ConnectionService},
     },
     utils::{HyperService, RouteTable, handle_panic},
 };

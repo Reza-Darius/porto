@@ -1,13 +1,11 @@
 #![allow(clippy::new_without_default)]
-use std::borrow::Borrow;
-use std::collections::{HashMap};
-use std::fmt::Display;
+use std::collections::HashMap;
+use std::fmt::{Debug, Display};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 
-use addr::parse_domain_name;
 use anyhow::{Context, Result, anyhow};
 use derive_more::{Display, Eq};
 use http::uri::{Authority, PathAndQuery};
@@ -17,6 +15,7 @@ use parking_lot::{Mutex, RwLock};
 use serde::Deserialize;
 use tracing::{debug, info};
 
+use super::domain::Domain;
 use crate::config::{PortoConfig, ServiceConfig};
 
 /// monotonic counter for peer ids
@@ -268,45 +267,5 @@ impl PeerProto {
             PeerProto::Http1 => Version::HTTP_11,
             PeerProto::Http2 => Version::HTTP_2,
         }
-    }
-}
-
-#[derive(Debug, Clone, Display, Hash, Eq, PartialEq, PartialOrd, Ord)]
-pub struct Domain(Arc<str>);
-
-// normalizing deserialization to lowercase
-impl<'de> Deserialize<'de> for Domain {
-    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de> {
-        let s = String::deserialize(deserializer)?;
-        Ok(Domain(Arc::from(s.to_ascii_lowercase())))
-    }
-}
-
-impl Domain {
-    pub fn parse(domain: impl AsRef<str>) -> Result<Self> {
-        let domain = domain.as_ref();
-        parse_domain_name(domain)
-            .map_err(|e| anyhow!("{e}"))?
-            .root()
-            .ok_or_else(|| anyhow!("couldnt extract root from domain {domain}"))
-            .map(|domain| Domain(Arc::from(domain)))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl AsRef<str> for Domain {
-    fn as_ref(&self) -> &str {
-        &self.0
-    }
-}
-
-impl Borrow<str> for Domain {
-    fn borrow(&self) -> &str {
-        &self.0
     }
 }

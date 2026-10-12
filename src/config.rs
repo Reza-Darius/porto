@@ -122,17 +122,14 @@ impl From<ProxyConfig> for Peer {
 pub struct TlsConfig {
     #[serde(rename(deserialize = "tls"))]
     pub enabled: bool,
-    pub auto_cert: bool,
+    pub domains: Vec<Domain>,
+
+    /// enables ACME, if this is enabled, the other paths are ignored
+    pub auto: bool,
 
     // for simple TLS
     pub cert_path: Option<PathBuf>,
     pub key_path: Option<PathBuf>,
-
-    // for ACME
-    pub credentials: Option<PathBuf>,
-
-    #[serde(skip)]
-    pub debug: bool, // for testing only
 }
 
 impl TlsConfig {
@@ -144,8 +141,8 @@ impl TlsConfig {
         }
 
         // we cant have acme enabled and tls disabled, set both to disabled
-        if self.auto_cert && !self.enabled {
-            self.auto_cert = false;
+        if self.auto && !self.enabled {
+            self.auto = false;
         }
 
         Ok(())
@@ -156,11 +153,11 @@ impl Default for TlsConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            auto_cert: false,
+            domains: Vec::new(),
+            auto: false,
+
             cert_path: None,
             key_path: None,
-            credentials: None,
-            debug: false,
         }
     }
 }
@@ -347,25 +344,25 @@ mod config_tests {
 
     fn setup_test_conf(path: &Path) {
         let config = r#"
-            [global]
-            bind = "127.0.0.1:3000"
-            limit = true
+        [global]
+        bind = "127.0.0.1:3000"
+        limit = true
 
-            [tls]
-            tls = true
-            auto_cert = false
-            cert_path = "credentials/example_cert.pem"
-            key_path = "credentials/example_key.pem"
+        [tls]
+        tls = true
+        auto = false
+        domains = ["darius.dev", "RezaDarius.de"]
+        cert_path = "credentials/example_cert.pem"
+        key_path = "credentials/example_key.pem"
 
-            [[proxy]]
-            domain = "darius.dev"
-            upstream = "10.0.0.0:67"
+        [[proxy]]
+        domain = "darius.dev"
+        upstream = "10.0.0.0:67"
 
-            [[proxy]]
-            domain = "RezaDarius.de"
-            upstream = "/tmp/darius_art.sock"
-
-            "#;
+        [[proxy]]
+        domain = "RezaDarius.de"
+        upstream = "/tmp/darius_art.sock"
+        "#;
         std::fs::write(path, config.as_bytes()).unwrap();
     }
 
@@ -378,7 +375,7 @@ mod config_tests {
         let config = parse_config_file("testporto.toml").unwrap();
 
         assert!(config.tls.enabled);
-        assert!(!config.tls.auto_cert);
+        assert!(!config.tls.auto);
         assert_eq!(config.proxy.len(), 2);
         eprintln!("{:#?}", config);
 

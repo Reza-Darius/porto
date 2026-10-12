@@ -49,7 +49,7 @@ async fn main() -> Result<()> {
             }
         }
         ServerCtrl::Remove => {
-            let prompt ="do you wish to remove porto? y/n";
+            let prompt = "do you wish to remove porto? y/n";
             prompt_confirmation(prompt);
 
             execute_remote_script(UNINSTALL_SCRIPT_URL).await?;

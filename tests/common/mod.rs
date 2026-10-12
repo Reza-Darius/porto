@@ -14,14 +14,13 @@ pub mod backend;
 pub mod client;
 pub mod proxy;
 
-const CERT_PATH: &str = "credentials/testpeer.com+3.pem";
-const KEY_PATH: &str = "credentials/testpeer.com+3-key.pem";
+const CERT_PATH: &str = "credentials/testpeer.com+2.pem";
+const KEY_PATH: &str = "credentials/testpeer.com+2-key.pem";
 const PROXY_ADDR: &str = "127.0.0.1:4000";
 
 pub static INIT: Once = Once::new();
 
 pub fn setup_test_config(proxies: &[(&str, &str)]) -> PortoConfig {
-
     let mut config = PortoConfig::default();
     config.global.bind = Some(PROXY_ADDR.parse().unwrap());
     config.tls.cert_path = Some(PathBuf::from_str(CERT_PATH).unwrap());
