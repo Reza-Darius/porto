@@ -8,7 +8,6 @@ use hyper_util::server::conn::auto::Builder;
 use hyper_util::server::graceful::Watcher;
 use hyper_util::{rt::TokioIo, service::TowerToHyperService};
 use std::time::Instant;
-use tap::Pipe;
 use tokio::net::TcpStream;
 use tokio::select;
 use tokio_rustls::TlsAcceptor;
@@ -108,18 +107,14 @@ async fn handle_https(
     debug!(duration_ms = t.elapsed().as_millis(), "TLS handshake time");
 
     // attaching infos for rate limiting
-    let service = service
-        .map_request(move |mut req: Request<_>| {
-            req.extensions_mut().insert(addr);
-            req
-        })
-        .pipe(TowerToHyperService::new);
+    let service = service.map_request(move |mut req: Request<_>| {
+        req.extensions_mut().insert(addr);
+        req
+    });
 
     let builder = Builder::new(TokioExecutor::new());
-    let conn = builder
-        .serve_connection(tls_stream, service)
-        .pipe(|c| watcher.watch(c));
-
+    let conn = builder.serve_connection(tls_stream, TowerToHyperService::new(service));
+    let conn = watcher.watch(conn);
     if let Err(e) = conn.await {
         // ignoring rustls EOF errors
         if let Some(e) = e.downcast_ref::<std::io::Error>() {
@@ -136,20 +131,19 @@ async fn handle_https(
 
 async fn handle_http(stream: TcpStream, addr: SocketAddr, service: HyperService, watcher: Watcher) {
     // attaching infos for rate limiting
-    let service = service
-        .map_request(move |mut req: Request<_>| {
-            req.extensions_mut().insert(addr);
-            req
-        })
-        .pipe(TowerToHyperService::new);
+    let service = service.map_request(move |mut req: Request<_>| {
+        req.extensions_mut().insert(addr);
+        req
+    });
 
-    if let Err(e) = Builder::new(TokioExecutor::new())
-        .serve_connection(TokioIo::new(stream), service)
-        .pipe(|c| watcher.watch(c))
-        .await
-    {
+    let builder = Builder::new(TokioExecutor::new());
+    let conn = builder.serve_connection(TokioIo::new(stream), TowerToHyperService::new(service));
+    let conn = watcher.watch(conn);
+
+    if let Err(e) = conn.await {
         error!("error when serving connection {e:#}");
     };
+
     debug!("stream closed");
 }
 

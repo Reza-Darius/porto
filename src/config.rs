@@ -10,7 +10,6 @@ use std::{
 use anyhow::{Context, Result, anyhow};
 use http::Version;
 use serde::Deserialize;
-use tap::Pipe;
 use tracing::{debug, error, info, instrument, warn};
 
 use crate::{
@@ -279,10 +278,8 @@ fn search_directory(path: impl AsRef<Path>) -> Option<PathBuf> {
 fn parse_config_file(path: impl AsRef<Path>) -> Result<PortoConfig> {
     let path = path.as_ref();
 
-    let mut config: PortoConfig = path
-        .pipe(std::fs::read)
-        .with_context(|| anyhow!("path: {}", path.display()))?
-        .pipe_as_ref(toml::from_slice)?;
+    let file = std::fs::read(path).with_context(|| anyhow!("path: {}", path.display()))?;
+    let mut config: PortoConfig = toml::from_slice(&file)?;
 
     config.tls.validate()?;
 
