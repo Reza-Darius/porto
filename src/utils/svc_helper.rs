@@ -60,25 +60,23 @@ pub fn handle_panic(err: Box<dyn Any + Send + 'static>) -> Response<Body> {
     internal_error()
 }
 
-// We create some utility functions to make Empty and Full bodies
-// fit our broadened Response body type.
+// creats an empty body, suitable for leaf services
 pub fn empty() -> Body {
     Empty::<Bytes>::new()
         .map_err(|never| match never {})
         .boxed_unsync()
 }
 
+// creats an empty body, suitable for leaf services
 pub fn full<T: Into<Bytes>>(chunk: T) -> Body {
     Full::new(chunk.into())
         .map_err(|never| match never {})
         .boxed_unsync()
 }
 
-/*
- * helper struct and function for service futures allowing to pass the nested
- * response body or return a HTTP message without a boxed future
- */
 pin_project! {
+    /// helper struct and function for service futures allowing to pass the nested
+    /// response body or return a HTTP message without a boxed future
     pub struct ResponseBody<B> {
         #[pin]
         inner: ResponseBodyInner<B>
@@ -90,9 +88,7 @@ impl<B> ResponseBody<B> {
     pub(crate) fn with_msg(str: &str) -> Self {
         Self {
             inner: ResponseBodyInner::Custom {
-                body: Full::from(str.to_string())
-                    .map_err(Into::into)
-                    .boxed_unsync(),
+                body: Full::from(str.to_string()),
             },
         }
     }
@@ -100,14 +96,16 @@ impl<B> ResponseBody<B> {
     /// create a empty body
     pub(crate) fn empty() -> Self {
         Self {
-            inner: ResponseBodyInner::Custom { body: empty() },
+            inner: ResponseBodyInner::Empty,
         }
     }
 
     /// create a empty body
     pub(crate) fn new(data: impl Into<Bytes>) -> Self {
         Self {
-            inner: ResponseBodyInner::Custom { body: full(data) },
+            inner: ResponseBodyInner::Custom {
+                body: Full::new(data.into()),
+            },
         }
     }
 
@@ -125,12 +123,13 @@ pin_project! {
         Custom {
             // OPTIMIZE: change this to a Full<Bytes> type
             #[pin]
-            body: UnsyncBoxBody<Bytes, BoxError>,
+            body: Full<Bytes>,
         },
         Wrapped {
             #[pin]
             body: B
-        }
+        },
+        Empty,
     }
 }
 
@@ -147,8 +146,9 @@ where
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
         match self.project().inner.project() {
-            BodyProj::Custom { body } => body.poll_frame(cx),
+            BodyProj::Custom { body } => body.poll_frame(cx).map_err(Into::into),
             BodyProj::Wrapped { body } => body.poll_frame(cx).map_err(Into::into),
+            BodyProj::Empty => Poll::Ready(None),
         }
     }
 
@@ -156,6 +156,7 @@ where
         match &self.inner {
             ResponseBodyInner::Custom { body } => body.is_end_stream(),
             ResponseBodyInner::Wrapped { body } => body.is_end_stream(),
+            ResponseBodyInner::Empty => true,
         }
     }
 
@@ -163,6 +164,7 @@ where
         match &self.inner {
             ResponseBodyInner::Custom { body } => body.size_hint(),
             ResponseBodyInner::Wrapped { body } => body.size_hint(),
+            ResponseBodyInner::Empty => SizeHint::with_exact(0),
         }
     }
 }
